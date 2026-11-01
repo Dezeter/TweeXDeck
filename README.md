@@ -27,7 +27,7 @@ This is an independently developed fork of [OldTweetDeck by dimden](https://gith
 - [Tweet shapes while a column loads](#loading-and-empty-columns), and a plain message with a button when it's empty or X didn't answer
 - [Emoji and GIF pickers](#emoji-and-gifs) in the tweet box, and [long posts](#long-posts) up to 25,000 characters
 - [An explanation instead of an endless spinner](#when-tweetdeck-doesnt-load) when TweetDeck doesn't load, with a report to copy into an issue
-- [A calm dark theme](#appearance) in place of TweetDeck's dark blue, [a theme that follows the system's](#appearance), [Lights out](#appearance) in black, [a comfortable density](#appearance) and [sharp SVG icons](#appearance)
+- [A calm dark theme](#appearance) in place of TweetDeck's dark blue, [and a light one to match](#appearance), [a theme that follows the system's](#appearance), [Lights out](#appearance) in black, [a comfortable density](#appearance) and [sharp SVG icons](#appearance)
 - [A font of your choice](#font) for TweetDeck's text: Golos Text, Onest, Inter or Manrope
 - [A command palette](#command-palette) on Ctrl+K: go to a column, write a tweet, switch the theme and more
 - [A Settings tab](#settings) to switch each of these on and off, with a search
@@ -234,6 +234,13 @@ The dark theme is a calm one, in place of TweetDeck's dark blue, which had frame
 - What's only for the keys or for context is quieter: TweetDeck's column numbers are hidden, "View Conversation", "↩ @name" and "Show this thread" are grey, the scrollbars thin.
 - TweetDeck's own menus, dialogs and drawers follow, as every rule of its dark theme gets a twin with these colors in place of its blues.
 
+The light theme is the same calm one in light, in place of TweetDeck's bluish greys, its dark blue left bar and its blue drawer for a new tweet:
+
+- The app and its left bar a light grey `#F1F2F4`, white columns on it with round corners and a hairline round them, a quote on a shade of grey of its own, a hairline between tweets.
+- The same soft blue, deeper for text on white: `#3A5CE0` for links and icons (5.6:1), `#4466EE` under white text. Icons grey, red and green for a like and a retweet.
+- Three greys of text: `#1B1C1F`, `#5B5F67` (6.4:1) and `#6C7078` (5:1) for @handles and times.
+- TweetDeck's blue panels are light: the drawer for a new tweet the left bar's grey with dark text and quiet buttons, a reply in a column a light grey. Its menus, dialogs and cards follow, as every rule of its light theme gets a twin with these colors, the rules of link cards as they're drawn too.
+
 Settings → TweeXDeck → Appearance has, in one place:
 
 - **Theme**: light, dark, or as the system, which follows the system's light or dark mode as it changes. "System" is in Settings → General → Theme too.
@@ -245,7 +252,7 @@ Settings → TweeXDeck → Appearance has, in one place:
 
 TweetDeck's look is also brought up to today's accessibility standards (WCAG 2.2 AA) where it fell short, with the "Better readability" switch:
 
-- The light theme's grey text, icons and links are darker: handles and times at 6.1:1 instead of 2.9:1, links at 5.1:1 instead of 2.8:1, the icons under a tweet at 6.1:1 instead of 2.0:1. The dark theme's are above.
+- The light theme's grey text, icons and links are darker: handles and times at 5:1 instead of 2.9:1, links at 5.6:1 instead of 2.8:1, the icons under a tweet at 6.4:1 instead of 2.0:1. The dark theme's are above.
 - The buttons under a tweet take a 32px circle around their 18px icons, tinted on hover as on x.com, so they're easier to hit.
 - Keyboard focus shows as a blue ring (TweetDeck took it off everywhere); a click doesn't draw it.
 - Tweet text has more room between lines (1.4), @handles are 13px instead of 12, counts don't jump as they change, and there are 6px between a tweet's text and its buttons instead of 3.

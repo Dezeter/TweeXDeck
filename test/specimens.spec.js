@@ -158,10 +158,13 @@ async function stand(page, { dark = false, width = "medium", media = "", density
     }, [dark, width]);
 }
 
-// a picture of each tweet in <SPECIMENS_OUT>/<name>/, numbered, with their labels in labels.json
+// a picture of each tweet in <SPECIMENS_OUT>/<name>/, numbered, with their labels in labels.json, and of the top of
+// the page, its columns side by side
 async function shoot(page, name) {
     const dir = path.join(process.env.SPECIMENS_OUT, name);
     fs.mkdirSync(dir, { recursive: true });
+    const { width } = page.viewportSize();
+    await page.screenshot({ path: path.join(dir, "page.png"), clip: { x: 0, y: 0, width, height: 1100 } });
     const SEL = "article[data-otd-label]:not([data-otd-label='·']):not(.js-tweet-replies article), [data-otd-label='opened tweet']";
     const labels = await page.evaluate(SEL => [...document.querySelectorAll(SEL)].map(a => a.dataset.otdLabel), SEL);
     for(const [i, el] of (await page.$$(SEL)).entries()) await el.screenshot({ path: path.join(dir, `${String(i).padStart(2, "0")}.png`) });
@@ -345,6 +348,22 @@ for(const [name, options] of Object.entries({
         const quote = getComputedStyle(document.querySelector('article[data-otd-label="quote"] .quoted-tweet'));
         return { blue: ["rgb(29, 161, 242)", "rgb(56, 68, 77)", "rgb(61, 84, 102)"].filter(color => frames.has(color)), quote: [quote.borderTopColor, quote.backgroundColor] };
     })).toEqual({ blue: [], quote: ["rgba(0, 0, 0, 0)", "rgba(255, 255, 255, 0.04)"] });
+    // the light theme calm too: none of TweetDeck's blue or its bluish greys left, in text, backgrounds or frames
+    if(!options.dark) expect(await page.evaluate(() => {
+        const TWEETDECK = ["rgb(29, 161, 242)", "rgb(27, 149, 224)", "rgb(20, 23, 26)", "rgb(101, 119, 134)", "rgb(136, 153, 166)", "rgb(170, 184, 194)", "rgb(204, 214, 221)", "rgb(225, 232, 237)", "rgb(245, 248, 250)", "rgb(28, 41, 56)"];
+        const left = new Set();
+        for(const el of document.querySelectorAll(".js-app, .js-app *, .js-app-content *")) {
+            if(!el.getClientRects().length) continue;
+            const style = getComputedStyle(el);
+            const used = [style.color, style.backgroundColor];
+            for(const side of ["Top", "Right", "Bottom", "Left"]) {
+                if(parseFloat(style[`border${side}Width`]) > 0 && style[`border${side}Style`] !== "none") used.push(style[`border${side}Color`]);
+            }
+            for(const color of used) if(TWEETDECK.includes(color)) left.add(`${color} ${el.tagName.toLowerCase()}.${[...el.classList].slice(0, 3).join(".")}`);
+        }
+        const quote = getComputedStyle(document.querySelector('article[data-otd-label="quote"] .quoted-tweet'));
+        return { left: [...left], quote: [quote.borderTopColor, quote.backgroundColor] };
+    })).toEqual({ left: [], quote: ["rgba(0, 0, 0, 0)", "rgba(0, 0, 0, 0.035)"] });
     // a hairline round a square
     if(side) expect(await page.$eval('article[data-otd-label="photo, landscape"] .tweet-body > .js-media', el => getComputedStyle(el).outlineWidth)).toBe("1px");
     if(process.env.SPECIMENS_OUT) await shoot(page, name);

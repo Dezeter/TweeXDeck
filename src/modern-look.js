@@ -1,6 +1,7 @@
 // TweetDeck's look brought to today's standards where it falls short (UX audit, October 2026):
-// - the light theme's grey text, icons and links pass WCAG AA: #536471 for secondary text and the icons of the
-//   action row (2.9:1 and 2.0:1 before), #1570c4 for links (2.8:1 before); the dark theme already passes;
+// - the light theme's grey text, icons and links pass WCAG AA: the calm light theme's (theme.js) grey of
+//   secondary text for it and the icons of the action row (6.4:1; 2.9:1 and 2.0:1 before), its blue for links
+//   (5.6:1; 2.8:1 before), x.com's #536471 and #1570c4 without it; the dark theme already passes;
 // - the action row's buttons take a 32px circle around their 18px icons, tinted on hover as on x.com;
 // - keyboard focus shows (TweetDeck takes the outline off everywhere), for the pointer it stays as it was;
 // - tweet text at line-height 1.4 instead of 1.29, @handles at 13px instead of 12, counts in tabular figures,
@@ -76,10 +77,10 @@
         html.otd-modern:not(.dark) .chirp-container .stream-item:not(:hover):not(.is-selected-tweet) .tweet-action${RESTING},
         html.otd-modern:not(.dark) .chirp-container .stream-item:not(:hover):not(.is-selected-tweet) .tweet-detail-action${RESTING},
         html.otd-modern:not(.dark) .tweet-action${RESTING},
-        html.otd-modern:not(.dark) .tweet-detail-action${RESTING} { color: #536471; }
+        html.otd-modern:not(.dark) .tweet-detail-action${RESTING} { color: var(--otd-text-2, #536471); }
         html.otd-modern:not(.dark) .tweet-text a:not(:hover),
         html.otd-modern:not(.dark) .other-replies a:not(:hover),
-        html.otd-modern:not(.dark) .js-show-this-thread .color-twitter-blue { color: #1570c4; }
+        html.otd-modern:not(.dark) .js-show-this-thread .color-twitter-blue { color: var(--otd-accent, #1570c4); }
 
         /* the circle is the button's middle, so the button is its icon's height and the icon in the middle of its own:
            with the counts on TweetDeck floats the icon and the count, and the button around them would be 0px tall;
@@ -121,7 +122,7 @@
         html.otd-modern .tweet-footer, html.dark.otd-modern .tweet-footer { margin-top: 6px; }
         html.otd-modern .quoted-tweet, html.dark.otd-modern .quoted-tweet { color: inherit; }
         html.otd-modern .js-stream-item:not(.otd-notif-group) .activity-header > .nbfc {
-            display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 13px; line-height: 20px; white-space: nowrap; color: #536471;
+            display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 13px; line-height: 20px; white-space: nowrap; color: var(--otd-text-2, #536471);
         }
         html.dark.otd-modern .js-stream-item:not(.otd-notif-group) .activity-header > .nbfc { color: var(--otd-text-2, #8899a6); }
         /* the line and its time on one middle, not on the avatar's baseline */
