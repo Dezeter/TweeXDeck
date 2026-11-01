@@ -200,7 +200,10 @@
         ${s} .column-nav-item:hover { background-color: var(--otd-nav-hover) !important; }
         ${s} .with-nav-border-t::before { border-top-color: var(--otd-line) !important; }
         ${s} .column { background-color: var(--otd-panel) !important; border-radius: 10px; }
-        ${s} .column-panel { background-color: var(--otd-panel) !important; box-shadow: inset 0 0 0 1px var(--otd-panel-edge); border-radius: 10px; }
+        ${s} .column-panel { background-color: var(--otd-panel) !important; border-radius: 10px; }
+        /* the hairline round a column over what's in it: on the panel itself it was under the column's scroller, which
+           is drawn over it, so only its header had it */
+        ${s} .column-panel::after { content: ""; position: absolute; inset: 0; z-index: 2; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--otd-panel-edge); pointer-events: none; }
         ${s} .column-header { background-color: transparent !important; border-bottom: 1px solid var(--otd-line) !important; }
         ${s} .column-heading { color: var(--otd-text); font-weight: 600; }
         ${s} .column-header .attribution { color: var(--otd-text-3); }

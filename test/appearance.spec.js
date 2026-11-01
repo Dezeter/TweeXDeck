@@ -158,7 +158,8 @@ test("the light theme is the calm one in light: white columns on a light grey, n
 test("Lights out: the calm dark theme in black, with a hairline round a column; off, the calm one again", async ({ page }) => {
     await open(page, { dark: true, storage: { OTDlightsOut: "1" } });
     expect(await colors(page)).toEqual({ column: "rgb(0, 0, 0)", item: "rgb(0, 0, 0)", border: "rgba(255, 255, 255, 0.1)", app: "rgb(0, 0, 0)", mute: "rgb(128, 132, 140)" });
-    expect(await page.$eval(".column-panel", el => getComputedStyle(el).boxShadow)).toBe("rgba(255, 255, 255, 0.1) 0px 0px 0px 1px inset");
+    // over the column's tweets: on the panel itself its scroller, drawn over it, hid the hairline by them
+    expect(await page.$eval(".column-panel", el => [getComputedStyle(el, "::after").boxShadow, getComputedStyle(el, "::after").zIndex])).toEqual(["rgba(255, 255, 255, 0.1) 0px 0px 0px 1px inset", "2"]);
     // a rule with !important keeps it
     expect(await page.evaluate(() => {
         document.body.insertAdjacentHTML("beforeend", '<div class="accounts-drawer"></div>');
