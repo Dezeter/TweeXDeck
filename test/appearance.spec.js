@@ -120,9 +120,39 @@ test("the dark theme is calm: TweetDeck's blues are neutral greys, a column a sh
             .filter(rule => rule.selectorText?.includes("html.dark") && rule.style.cssText.includes("rgb(29, 161, 242)"));
         return [blue.length > 50, blue.filter(rule => !twins.has(rule.selectorText)).map(rule => rule.selectorText)];
     })).toEqual([true, []]);
-    // the light theme as it was
+    // the calm light theme, as the page switches to it
     await page.evaluate(() => document.documentElement.classList.remove("dark"));
-    expect(await colors(page)).toMatchObject({ column: "rgb(255, 255, 255)", item: "rgb(255, 255, 255)" });
+    expect(await colors(page)).toEqual(LIGHT);
+});
+
+const LIGHT = { column: "rgb(255, 255, 255)", item: "rgb(255, 255, 255)", border: "rgba(0, 0, 0, 0.07)", app: "rgb(241, 242, 244)", mute: "rgb(108, 112, 120)" };
+test("the light theme is the calm one in light: white columns on a light grey, neutral greys, a hairline between tweets, a deeper soft blue", async ({ page }) => {
+    await open(page);
+    expect(await colors(page)).toEqual(LIGHT);
+    // TweetDeck's blue: a deeper one of the soft blue for links and icons on white, 5.6:1; under white text the
+    // dark theme's, 4.8:1
+    expect(await page.evaluate(() => {
+        document.body.insertAdjacentHTML("beforeend", '<a class="otd-test-link" href="#">link</a><button class="Button Button--primary otd-test-button">Tweet</button><i class="icon icon-follow-color otd-test-follow"></i>');
+        const style = selector => getComputedStyle(document.querySelector(selector));
+        return [style(".otd-test-link").color, style(".otd-test-button").backgroundColor, style(".otd-test-follow").color];
+    })).toEqual(["rgb(58, 92, 224)", "rgb(68, 102, 238)", "rgb(58, 92, 224)"]);
+    // the left bar the app's grey, not TweetDeck's dark blue: its text dark, the compose button without the blue
+    expect(await page.evaluate(() => {
+        document.body.insertAdjacentHTML("beforeend", `<div class="js-app application" style="position:absolute;left:0;top:0;bottom:0;width:200px">${TD.ui.template.render("topbar/app_header", {})}</div>`);
+        const style = selector => getComputedStyle(document.querySelector(selector));
+        return [style(".app-header").backgroundColor, style(".app-nav-link-text").color, style(".js-show-drawer").color, style(".js-show-drawer").backgroundColor];
+    })).toEqual(["rgb(241, 242, 244)", "rgb(27, 28, 31)", "rgb(27, 28, 31)", "rgba(0, 0, 0, 0.05)"]);
+    // every rule of TweetDeck's light theme with its blue has a twin only light pages match
+    expect(await page.evaluate(() => {
+        const twins = new Set([...document.getElementById("otd-light").sheet.cssRules].map(rule => rule.selectorText));
+        const lightOnly = selector => selector.split(", ").map(one => one.startsWith("html") ? `html:where(:not(.dark))${one.slice(4)}` : `:where(html:not(.dark)) ${one}`).join(", ");
+        const blue = [...document.styleSheets].filter(sheet => !sheet.ownerNode.id?.startsWith("otd-")).flatMap(sheet => [...sheet.cssRules])
+            .filter(rule => rule.selectorText && !rule.selectorText.includes("html.dark") && rule.style.cssText.includes("rgb(29, 161, 242)"));
+        return [blue.length > 50, blue.filter(rule => !twins.has(lightOnly(rule.selectorText))).map(rule => rule.selectorText)];
+    })).toEqual([true, []]);
+    // and dark as the page switches to it: the calm dark theme, the light twins out of its way
+    await page.evaluate(() => document.documentElement.classList.add("dark"));
+    expect(await colors(page)).toEqual(CALM);
 });
 
 test("Lights out: the calm dark theme in black, with a hairline round a column; off, the calm one again", async ({ page }) => {
@@ -158,8 +188,8 @@ test("TweetDeck's CSS closed to the page, as in Firefox: the calm theme and Ligh
     await page.evaluate(() => OTD.setOn("lightsOut", true));
     expect(await colors(page)).toMatchObject({ column: "rgb(0, 0, 0)", item: "rgb(0, 0, 0)", app: "rgb(0, 0, 0)" });
     expect(await page.evaluate(() => window.__theme)).toEqual([
-        expect.stringMatching(/^[1-9]\d{2} twins of TweetDeck's rules, its CSS read from its text$/),
-        expect.stringMatching(/^[1-9]\d{2} twins of TweetDeck's rules, [1-9]\d+ for Lights out, its CSS read from its text$/),
+        expect.stringMatching(/^[1-9]\d{2} twins of TweetDeck's dark rules, [1-9]\d{2} of its light ones, its CSS read from its text$/),
+        expect.stringMatching(/^[1-9]\d{2} twins of TweetDeck's dark rules, [1-9]\d{2} of its light ones, [1-9]\d+ for Lights out, its CSS read from its text$/),
     ]);
 });
 
@@ -170,7 +200,8 @@ test("TweetDeck's CSS after theme.js: the twins once TweetDeck is ready, after i
         window.__tdStyle.remove();
     };
     await open(page, { dark: true, before: [`(${listen})(); (${takeOut})();`] });
-    expect((await page.evaluate(() => window.__theme))[0]).toBe("0 twins of TweetDeck's rules");
+    // the light ones of the extension's own rules
+    expect((await page.evaluate(() => window.__theme))[0]).toMatch(/^0 twins of TweetDeck's dark rules, \d of its light ones$/);
     await page.evaluate(() => {
         document.head.append(window.__tdStyle);
         OTD.jQuery()(document).trigger("TD.ready.otd-twins");
@@ -178,10 +209,29 @@ test("TweetDeck's CSS after theme.js: the twins once TweetDeck is ready, after i
     // the pointer off the tweets: the page's change has it over one, at 0, 0
     await page.mouse.move(5, 700);
     expect(await colors(page)).toEqual(CALM);
-    expect((await page.evaluate(() => window.__theme))[1]).toMatch(/^[1-9]\d{2} twins of TweetDeck's rules$/);
+    expect((await page.evaluate(() => window.__theme))[1]).toMatch(/^[1-9]\d{2} twins of TweetDeck's dark rules, [1-9]\d{2} of its light ones$/);
 });
 
 test("Lights out leaves the light theme alone", async ({ page }) => {
     await open(page, { storage: { OTDlightsOut: "1" } });
-    expect(await colors(page)).toMatchObject({ column: "rgb(255, 255, 255)", item: "rgb(255, 255, 255)" });
+    expect(await colors(page)).toEqual(LIGHT);
+});
+
+test("TweetDeck's blue panels in the light theme, the composer's drawer and a reply in a column: a light grey, their text dark", async ({ page }) => {
+    await open(page);
+    expect(await page.evaluate(() => {
+        // TweetDeck's own markup of them, its mustache tags out
+        const req = window.__require;
+        const template = text => String(req(Object.keys(req.m).find(id => req.m[id].toString().includes(text))).default).replace(/\{\{[^}]*\}\}/g, "");
+        document.body.insertAdjacentHTML("beforeend", `<div style="width:300px">${template("js-docked-compose compose txt-size--14")}</div>`);
+        document.querySelector("article .js-stream-item-content").insertAdjacentHTML("beforeend", template("js-inline-reply inline-reply item-box-full-bleed").replace("is-inline-inactive ", ""));
+        const style = selector => getComputedStyle(document.querySelector(selector));
+        return {
+            drawer: [style(".compose").backgroundColor, style(".compose-title-text").color, style(".compose .btn-on-blue").backgroundColor, style(".compose .btn-on-blue .label").color],
+            reply: [style(".inline-reply").backgroundColor, style(".inline-reply label").color, style(".inline-reply .icon-close").color],
+        };
+    })).toEqual({
+        drawer: ["rgb(241, 242, 244)", "rgb(27, 28, 31)", "rgba(0, 0, 0, 0.05)", "rgb(27, 28, 31)"],
+        reply: ["rgb(243, 244, 245)", "rgb(27, 28, 31)", "rgb(91, 95, 103)"],
+    });
 });
