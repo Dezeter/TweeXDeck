@@ -76,10 +76,12 @@ test("the verified badge is X's, grey as the other icons, in place of TweetDeck'
     expect(await badge()).toMatchObject({ image: "picture", x: false });
 });
 
-test("every class with a shape is one of TweetDeck's icons, and every shape is used", () => {
+test("every class with a shape is one of TweetDeck's icons or this extension's own, and every shape is used", () => {
     const icons = [...source.match(/const ICONS = \{([\s\S]*?)\};/)[1].matchAll(/"([\w-]+)": "([\w-]+)(?: \w+)?"/g)];
     const shapes = [...source.match(/const SHAPES = \{([\s\S]*?)\};/)[1].matchAll(/^\s+"([\w-]+)":/gm)].map(m => m[1]);
     expect(icons.length).toBeGreaterThan(60);
-    for(const [, name] of icons) expect(css, `.icon-${name}`).toContain(`.icon-${name}:before {`);
+    // this extension's own (otd-…): For you's, a column type of its own (for-you.js)
+    for(const [, name] of icons) if(!name.startsWith("otd-")) expect(css, `.icon-${name}`).toContain(`.icon-${name}:before {`);
+    expect(icons.map(m => m[1]).filter(name => name.startsWith("otd-"))).toEqual(["otd-foryou"]);
     expect([...new Set(icons.map(m => m[2]))].sort()).toEqual([...shapes].sort());
 });

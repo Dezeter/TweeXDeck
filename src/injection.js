@@ -76,6 +76,7 @@ async function main() {
             load("/src/download-media.js"),
             load("/src/pause-on-hover.js"),
             load("/src/steady-columns.js"),
+            load("/src/for-you.js"),
             load("/src/loading.js"),
             load("/src/tab-title.js"),
             load("/src/emoji-picker.js"),

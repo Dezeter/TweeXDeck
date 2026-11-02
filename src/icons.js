@@ -50,6 +50,7 @@
         "repeat-2": "<path d='m2 9 3-3 3 3'/><path d='M13 18H7a2 2 0 0 1-2-2V6'/><path d='m22 15-3 3-3-3'/><path d='M11 6h6a2 2 0 0 1 2 2v10'/>",
         "search": "<path d='m21 21-4.34-4.34'/><circle cx='11' cy='11' r='8'/>",
         "settings": "<path d='M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915'/><circle cx='12' cy='12' r='3'/>",
+        "sparkles": "<path d='M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z'/><path d='M20 2v4'/><path d='M22 4h-4'/><circle cx='4' cy='20' r='2'/>",
         "share": "<path d='M12 2v13'/><path d='m16 6-4-4-4 4'/><path d='M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8'/>",
         "sliders-horizontal": "<path d='M10 5H3'/><path d='M12 19H3'/><path d='M14 3v4'/><path d='M16 17v4'/><path d='M21 12h-9'/><path d='M21 19h-5'/><path d='M21 5h-7'/><path d='M8 10v4'/><path d='M8 12H3'/>",
         "trash-2": "<path d='M10 11v6'/><path d='M14 11v6'/><path d='M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6'/><path d='M3 6h18'/><path d='M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2'/>",
@@ -77,7 +78,7 @@
         "pointer-u": "arrow-up", "play": "play", "pause": "pause", "sound": "volume-2", "sound-off": "volume-x",
         "protected": "lock", "info": "info", "poll": "chart-bar", "analytics": "chart-column", "user-switch": "users",
         "user-team-mgr": "users", "lightning": "zap", "content": "file-text", "user-dd": "chevron-down", "blocked": "ban",
-        "move": "grip-vertical",
+        "move": "grip-vertical", "otd-foryou": "sparkles",
     };
 
     const url = (shape, style) => {
@@ -105,6 +106,8 @@
            the round button of the condensed bar: the icon in the middle of the button, on a line its own height */
         html.otd-svg-icons .app-header.is-condensed .app-search-fake { display: flex; align-items: center; justify-content: center; padding: 0 !important; }
         html.otd-svg-icons .app-search-fake .icon { margin: 0; line-height: 1; }
+        /* a column type's icon in "Add column" over its name, as the glyph was: its box is the cell's width */
+        html.otd-svg-icons .lst-launcher .column-type-icon::before { margin-left: auto; margin-right: auto; }
     `);
     OTD.htmlClassWhileOn("svgIcons", "otd-svg-icons");
 })();
