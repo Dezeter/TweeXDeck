@@ -6,8 +6,10 @@
 //   filter:spaces), every 5 minutes; live ones it finds too;
 // - Each one's title, host, speakers, listeners and times from AudioSpaceById, by the id and features of x.com's
 //   main.js when it has them, the ones known when this was written otherwise.
-// "Listen" opens the Space on x.com. Live ones are asked for every minute while the page is in view; nothing is
-// asked while there's no Spaces column. Loaded by injection.js after for-you.js.
+// "Listen" plays a live one right here, one at a time, in a player on top of the column it was started from: its
+// stream from live_video_stream/status, played with hls.js (files/hls/, Apache 2.0) or the browser's own HLS. Live
+// ones are asked for every minute while the page is in view; nothing is asked while there's no Spaces column.
+// Loaded by injection.js after for-you.js.
 (() => {
     const TD = window.TD;
     if(!TD?.controller?.columnManager) return;
@@ -29,6 +31,9 @@
             roles: { host: ["ведёт", "ведут"], speaker: ["выступает", "выступают"], listener: ["слушает", "слушают"] },
             more: n => `и ещё ${n}`,
             people: { one: "человек", few: "человека", many: "человек", other: "человека" },
+            pause: "Пауза", play: "Слушать", close: "Закрыть", volume: "Громкость", again: "Ещё раз",
+            connecting: "Подключаемся…", playing: "В эфире", paused: "На паузе", ended: "Спейс закончился",
+            cantPlay: status => `Не удалось подключиться (${status})`, noBrowser: "браузер не играет такой поток",
         },
         en: {
             live: "Live", coming: "Coming up", liveBadge: "Live", comingBadge: "Scheduled",
@@ -46,6 +51,9 @@
             roles: { host: ["hosts", "host"], speaker: ["speaks", "speak"], listener: ["listens", "listen"] },
             more: n => `and ${n} more`,
             people: { one: "person", other: "people" },
+            pause: "Pause", play: "Listen", close: "Close", volume: "Volume", again: "Try again",
+            connecting: "Connecting…", playing: "Live", paused: "Paused", ended: "The Space has ended",
+            cantPlay: status => `Couldn't connect (${status})`, noBrowser: "the browser doesn't play this stream",
         },
     };
     const LANG = LABELS[OTD.UI_LANG] ? OTD.UI_LANG : "en";
@@ -232,6 +240,7 @@
         return {
             id, kind,
             title: String(meta.title || ""),
+            mediaKey: String(meta.media_key || ""),
             startedAt: Number(meta.started_at) || 0,
             scheduled,
             listening: Number(meta.total_live_listeners) || 0,
@@ -294,6 +303,7 @@
             // nothing was due
             if(!asked.length && !fine && !failed) return;
             state.checkedAt = Date.now();
+            if(player.space && player.user === user) heard(state.details.get(player.space.id)?.space);
             const { live, coming } = lists(state);
             document.dispatchEvent(new CustomEvent("otd-diagnostic", { detail: JSON.stringify({
                 kind: "spaces", fleetline: state.fleetStatus, search: state.searchStatus,
@@ -380,7 +390,7 @@
         }
         return parts.join(" · ");
     }
-    function card({ space, yours }) {
+    function card({ space, yours }, column) {
         const live = space.kind === "live";
         const item = el("article", `otd-space ${live ? "is-live" : "is-coming"}`);
         item.dataset.spaceId = space.id;
@@ -425,7 +435,17 @@
         if(line) item.append(el("p", "otd-space-yours", `${T.yours} ${line}`));
 
         const actions = el("div", "otd-space-actions");
-        actions.append(link(spaceUrl(space.id), "otd-space-listen", live ? T.listen : T.open));
+        if(live && space.mediaKey) {
+            // the one playing pauses, the one paused goes on
+            const current = player.space?.id === space.id;
+            const playing = current && (player.state === "playing" || player.state === "connecting");
+            const button = el("button", `otd-space-listen${current ? " is-current" : ""}`, playing ? T.pause : T.listen);
+            button.type = "button";
+            button.addEventListener("click", () => current && player.state !== "ended" && player.state !== "failed" ? toggle() : listen(space, column));
+            actions.append(button);
+        } else {
+            actions.append(link(spaceUrl(space.id), "otd-space-listen", live ? T.listen : T.open));
+        }
         item.append(actions);
         return item;
     }
@@ -460,14 +480,14 @@
         } else {
             const section = el("div", "otd-spaces-section otd-spaces-live");
             section.append(el("div", "otd-spaces-heading", live.length ? `${T.live} · ${live.length}` : T.live));
-            if(live.length) section.append(...live.map(card));
+            if(live.length) section.append(...live.map(item => card(item, column)));
             else section.append(el("p", "otd-spaces-note", T.noneLive));
             nodes.push(section);
             if(coming.length) {
                 const later = el("details", "otd-spaces-section otd-spaces-coming");
                 later.open = !folded.get(column.key);
                 later.addEventListener("toggle", () => folded.set(column.key, !later.open));
-                later.append(el("summary", "otd-spaces-heading", `${T.coming} · ${coming.length}`), ...coming.map(card));
+                later.append(el("summary", "otd-spaces-heading", `${T.coming} · ${coming.length}`), ...coming.map(item => card(item, column)));
                 nodes.push(later);
             }
         }
@@ -493,6 +513,7 @@
             drawn.set(box, html);
             box.replaceChildren(...nodes);
         }
+        drawPlayer();
     }
     function mount(column) {
         column.section.classList.add("otd-spaces-column");
@@ -506,6 +527,271 @@
         return box;
     }
 
+    // --- listening --------------------------------------------------------------------------------------------
+    // the Space playing, the column it was started from and its account, and how it goes: connecting, playing,
+    // paused, ended, failed
+    const player = { space: null, column: "", user: "", state: "", error: "", chatToken: "", audio: null, hls: null, token: null, pausedAt: 0 };
+    const VOLUME_STORAGE = "OTDspacesVolume";
+    const volume = () => {
+        const value = Number(localStorage[VOLUME_STORAGE]);
+        return localStorage[VOLUME_STORAGE] !== undefined && value >= 0 && value <= 1 ? value : 1;
+    };
+
+    // hls.js, the first time a Space is played: a global of the page, not a module of an AMD loader the page has
+    let hlsLoad = null;
+    function loadHls() {
+        if(window.Hls) return Promise.resolve(window.Hls);
+        hlsLoad ??= fetch(`${OTD.BASE_URL}files/hls/hls.light.min.js`).then(res => {
+            if(!res.ok) throw failure(`hls.js: HTTP ${res.status}`, res.status);
+            return res.text();
+        }).then(code => {
+            const amd = typeof window.define === "function" && window.define.amd ? window.define : null;
+            if(amd) window.define = undefined;
+            try {
+                const script = document.createElement("script");
+                script.textContent = code;
+                (document.getElementById("injected-head") || document.head).appendChild(script);
+            } finally {
+                if(amd) window.define = amd;
+            }
+            if(!window.Hls) throw new Error("hls.js didn't load");
+            return window.Hls;
+        }).catch(e => {
+            hlsLoad = null;
+            throw e;
+        });
+        return hlsLoad;
+    }
+
+    // where a live Space's audio is: live_video_stream/status by its media key; the chat's token for its captions
+    async function streamOf(space, user) {
+        const data = await getJSON(`/i/api/1.1/live_video_stream/status/${encodeURIComponent(space.mediaKey)}`, `client=web&use_syndication_guest_id=false&cookie_set_host=${location.hostname}`, user);
+        const url = data?.source?.noRedirectLocation || data?.source?.location;
+        if(!/^https:\/\//.test(url || "")) throw failure("no stream");
+        return { url, chatToken: String(data.chatToken || "") };
+    }
+
+    // one of its own for each Space played: what the one before still says once it's let go of isn't heard
+    function audioElement() {
+        const audio = player.audio = new Audio();
+        audio.preload = "auto";
+        const set = state => () => {
+            if(player.audio !== audio || !player.space || player.state === "ended" || player.state === "failed") return;
+            if(player.state !== state) {
+                player.state = state;
+                changed();
+            }
+        };
+        audio.addEventListener("playing", set("playing"));
+        audio.addEventListener("waiting", set("connecting"));
+        audio.addEventListener("pause", () => {
+            if(player.audio === audio) player.pausedAt = Date.now();
+            set("paused")();
+        });
+        audio.addEventListener("ended", () => {
+            if(player.audio === audio && player.space) end();
+        });
+        return audio;
+    }
+
+    async function listen(space, column) {
+        stop(false);
+        const audio = audioElement();
+        audio.volume = volume();
+        const token = {};
+        Object.assign(player, { space, column: column.key, user: column.user, state: "connecting", error: "", chatToken: "", token });
+        changed();
+        try {
+            const stream = await streamOf(space, column.user);
+            if(player.token !== token) return;
+            player.chatToken = stream.chatToken;
+            let Hls = null;
+            try {
+                Hls = await loadHls();
+            } catch(e) {
+                console.warn("[otd-spaces] hls.js", e);
+            }
+            if(player.token !== token) return;
+            if(Hls?.isSupported()) {
+                const hls = player.hls = new Hls({ liveDurationInfinity: true });
+                hls.on(Hls.Events.ERROR, (event, data) => {
+                    if(data?.fatal && player.token === token) fail(data.response?.code ? `HTTP ${data.response.code}` : String(data.details || data.type));
+                });
+                hls.loadSource(stream.url);
+                hls.attachMedia(audio);
+            } else if(audio.canPlayType("application/vnd.apple.mpegurl")) {
+                audio.src = stream.url;
+            } else {
+                throw failure(T.noBrowser);
+            }
+            try {
+                await audio.play();
+            } catch(e) {
+                // the browser wants a click of its own: the player's ▶
+                if(player.token === token && e?.name === "NotAllowedError") {
+                    player.state = "paused";
+                    changed();
+                } else throw e;
+            }
+        } catch(e) {
+            if(player.token === token) fail(describe(e));
+        }
+    }
+    function fail(error) {
+        release();
+        player.state = "failed";
+        player.error = error;
+        changed();
+    }
+    function end() {
+        release();
+        player.state = "ended";
+        changed();
+    }
+    // the stream let go of, the player kept to say what happened
+    function release() {
+        player.token = null;
+        player.hls?.destroy();
+        player.hls = null;
+        if(player.audio) {
+            player.audio.pause();
+            player.audio.removeAttribute("src");
+            player.audio.load();
+        }
+    }
+    // the player gone too; drawn again unless it's for another one
+    function stop(draw = true) {
+        const was = player.space;
+        release();
+        Object.assign(player, { space: null, column: "", user: "", state: "", error: "", chatToken: "" });
+        if(was && draw) changed();
+    }
+    function toggle() {
+        const audio = player.audio;
+        if(!audio || !player.space) return;
+        if(!audio.paused) {
+            audio.pause();
+            return;
+        }
+        // back at the live edge after a pause of more than a few seconds
+        const edge = player.hls?.liveSyncPosition;
+        if(edge && Date.now() - player.pausedAt > 5000) audio.currentTime = edge;
+        audio.play().catch(e => fail(describe(e)));
+    }
+    // what a refresh brought of the Space playing: ended, or what it is now
+    function heard(space) {
+        if(!space || !player.space || space.id !== player.space.id) return;
+        if(space.kind !== "live") {
+            if(player.state !== "ended" && player.state !== "failed") end();
+            return;
+        }
+        player.space = space;
+    }
+    // the cards' buttons, the player, and what the system's media controls show
+    function changed() {
+        render();
+        mediaSession();
+        document.dispatchEvent(new CustomEvent("otd-diagnostic", { detail: JSON.stringify({ kind: "spaces-player", state: player.state || "stopped", error: player.error }) }));
+    }
+    function mediaSession() {
+        const session = navigator.mediaSession;
+        if(!session) return;
+        try {
+            if(!player.space) {
+                session.metadata = null;
+                return;
+            }
+            if(typeof MediaMetadata === "function") {
+                const avatar = player.space.host?.avatar;
+                session.metadata = new MediaMetadata({
+                    title: player.space.title || T.untitled,
+                    artist: player.space.host?.name || "",
+                    album: "X Spaces",
+                    artwork: /^https:\/\//.test(avatar || "") ? [{ src: avatar.replace(/_normal(\.\w+)$/, "_400x400$1"), sizes: "400x400" }] : [],
+                });
+            }
+            session.setActionHandler("play", () => player.audio?.paused && toggle());
+            session.setActionHandler("pause", () => player.audio && !player.audio.paused && toggle());
+            session.setActionHandler("stop", () => stop());
+        } catch(e) {}
+    }
+
+    const ICONS = {
+        play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></svg>',
+        pause: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor"/></svg>',
+        close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+        volume: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    };
+    function iconButton(className, label, icon) {
+        const button = el("button", className);
+        button.type = "button";
+        button.setAttribute("aria-label", label);
+        button.title = label;
+        // the icons are this file's own markup, nothing of X's
+        button.innerHTML = icon;
+        return button;
+    }
+    // the player on top of the column it was started from, while there's one; gone with the column, the music too
+    function drawPlayer() {
+        const found = player.space ? columns().find(column => column.key === player.column) : null;
+        for(const old of document.querySelectorAll(".otd-space-player")) {
+            if(!found || !found.section.contains(old)) old.remove();
+        }
+        if(!player.space) return;
+        if(!found) {
+            stop();
+            return;
+        }
+        const scroller = found.section.querySelector(".js-column-scroller");
+        if(!scroller) return;
+        let box = scroller.querySelector(":scope > .otd-space-player");
+        if(!box) {
+            box = el("div", "otd-space-player");
+            box.setAttribute("role", "region");
+            const top = el("div", "otd-space-player-row");
+            const toggleButton = iconButton("otd-space-player-toggle", T.pause, ICONS.pause);
+            toggleButton.addEventListener("click", () => player.state === "ended" || player.state === "failed" ? listen(player.space, found) : toggle());
+            const text = el("div", "otd-space-player-text");
+            text.append(el("div", "otd-space-player-title"), el("div", "otd-space-player-state"));
+            const closeButton = iconButton("otd-space-player-close", T.close, ICONS.close);
+            closeButton.addEventListener("click", () => stop());
+            top.append(toggleButton, text, closeButton);
+            const bottom = el("div", "otd-space-player-row otd-space-player-bottom");
+            const volumeIcon = el("span", "otd-space-player-volume-icon");
+            volumeIcon.innerHTML = ICONS.volume;
+            const range = el("input", "otd-space-player-volume");
+            Object.assign(range, { type: "range", min: "0", max: "1", step: "0.05", value: String(volume()) });
+            range.setAttribute("aria-label", T.volume);
+            range.addEventListener("input", () => {
+                OTD.setValue(VOLUME_STORAGE, range.value === "1" ? "" : range.value);
+                if(player.audio) player.audio.volume = Number(range.value);
+            });
+            bottom.append(volumeIcon, range, link("", "otd-space-player-open", T.open));
+            box.append(top, bottom);
+            scroller.prepend(box);
+        }
+        const space = player.space, state = player.state;
+        box.dataset.spaceId = space.id;
+        box.dataset.state = state;
+        box.setAttribute("aria-label", space.title || T.untitled);
+        box.querySelector(".otd-space-player-title").textContent = space.title || `${T.untitled}${space.host?.name ? ` · ${space.host.name}` : ""}`;
+        const said = state === "failed" ? T.cantPlay(player.error) : state === "ended" ? T.ended : state === "paused" ? T.paused
+            : state === "connecting" ? T.connecting : T.playing;
+        box.querySelector(".otd-space-player-state").textContent = space.host?.name && state === "playing" ? `${said} · ${space.host.name}` : said;
+        const toggleButton = box.querySelector(".otd-space-player-toggle");
+        const again = state === "ended" || state === "failed";
+        const playing = state === "playing" || state === "connecting";
+        const label = again ? T.again : playing ? T.pause : T.play;
+        if(toggleButton.title !== label) {
+            toggleButton.title = label;
+            toggleButton.setAttribute("aria-label", label);
+            toggleButton.innerHTML = playing && !again ? ICONS.pause : ICONS.play;
+        }
+        // a Space that ended isn't there to listen to again
+        toggleButton.hidden = state === "ended";
+        box.querySelector(".otd-space-player-open").href = spaceUrl(space.id);
+    }
+
     // every 10 s what's due, while the page is in view; a new column at once
     function tick() {
         if(document.hidden) return;
@@ -517,12 +803,14 @@
         const found = columns();
         if(!found.length) return;
         if(found.some(column => !column.section.querySelector(".js-column-scroller > .otd-spaces"))) tick();
+        // TweetDeck drawing the column again took the player with it
+        else if(player.space && !document.querySelector(".otd-space-player")) drawPlayer();
     });
     setInterval(tick, 10 * 1000);
     document.addEventListener("visibilitychange", tick);
 
     OTD.addStyle(`
-        section.otd-spaces-column .js-column-scroller > :not(.otd-spaces) { display: none !important; }
+        section.otd-spaces-column .js-column-scroller > :not(.otd-spaces):not(.otd-space-player) { display: none !important; }
         .otd-spaces { --otd-live: #d0304f; padding: 6px 10px 16px; color: var(--otd-text, #14171a); font-size: 14px; line-height: 1.35; text-shadow: none; }
         html.dark .otd-spaces { --otd-live: #ff6b81; color: var(--otd-text, #fff); }
         .otd-spaces-section { margin: 0 0 6px; }
@@ -552,12 +840,37 @@
         .otd-space-faces > img:first-child { margin-left: 0; }
         .otd-spaces .otd-space-yours { margin: 8px 0 0; font-size: 13px; color: var(--otd-text-2, #657786); }
         .otd-space-actions { margin: 10px 0 0; }
-        .otd-spaces a.otd-space-listen { display: inline-block; padding: 6px 14px; border-radius: 999px; background: var(--otd-accent-fill, #1d9bf0); color: #fff; font-size: 13px; font-weight: 700; line-height: 1.2; text-decoration: none; }
-        .otd-spaces a.otd-space-listen:hover { filter: brightness(1.1); text-decoration: none; }
-        .otd-spaces .is-coming a.otd-space-listen { background: var(--otd-ghost, rgba(0, 0, 0, .05)); color: var(--otd-text, #14171a); }
-        html.dark .otd-spaces .is-coming a.otd-space-listen { color: var(--otd-text, #fff); }
+        .otd-spaces .otd-space-listen { display: inline-block; height: auto; margin: 0; padding: 6px 14px; border: 0 !important; box-shadow: none !important; border-radius: 999px; background: var(--otd-accent-fill, #1d9bf0); color: #fff; font-family: inherit; font-size: 13px; font-weight: 700; line-height: 1.2; text-decoration: none; cursor: pointer; }
+        .otd-spaces .otd-space-listen:hover { filter: brightness(1.1); text-decoration: none; }
+        .otd-spaces .is-coming .otd-space-listen, .otd-spaces .otd-space-listen.is-current { background: var(--otd-ghost, rgba(0, 0, 0, .05)); color: var(--otd-text, #14171a); }
+        html.dark .otd-spaces .is-coming .otd-space-listen, html.dark .otd-spaces .otd-space-listen.is-current { color: var(--otd-text, #fff); }
         .otd-spaces .otd-spaces-checked { margin: 10px 4px 0; font-size: 12px; color: var(--otd-text-3, #657786); }
         .otd-spaces .otd-spaces-refresh { padding: 0; border: 0; background: none; color: var(--otd-accent, #1d9bf0); font: inherit; cursor: pointer; }
         .otd-spaces .otd-spaces-refresh:hover { text-decoration: underline; }
+
+        .otd-space-player { --otd-live: #d0304f; position: sticky; top: 0; z-index: 2; margin: 0; padding: 10px 12px; border-bottom: 1px solid var(--otd-line, rgba(0, 0, 0, .07));
+            background: var(--otd-raised-solid, #f3f4f5); color: var(--otd-text, #14171a); font-size: 13px; line-height: 1.3; text-shadow: none; }
+        html.dark .otd-space-player { --otd-live: #ff6b81; color: var(--otd-text, #fff); }
+        .otd-space-player-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+        .otd-space-player-bottom { gap: 6px; margin: 8px 0 0; }
+        .otd-space-player-text { flex: 1; min-width: 0; }
+        .otd-space-player-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 700; }
+        .otd-space-player-state { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--otd-text-2, #657786); }
+        .otd-space-player[data-state="playing"] .otd-space-player-state { color: var(--otd-live); }
+        .otd-space-player[data-state="failed"] .otd-space-player-state { color: var(--otd-live); }
+        /* TweetDeck's own button frames, dark ones its accent's, aren't these */
+        .otd-space-player button { display: inline-flex; flex: none; align-items: center; justify-content: center; padding: 0; border: 0 !important; border-radius: 50%; box-shadow: none !important; cursor: pointer; }
+        .otd-space-player button[hidden] { display: none; }
+        .otd-space-player svg { width: 18px; height: 18px; }
+        .otd-space-player .otd-space-player-toggle { width: 36px; height: 36px; background: var(--otd-accent-fill, #1d9bf0); color: #fff; }
+        .otd-space-player .otd-space-player-toggle:hover { filter: brightness(1.1); }
+        .otd-space-player .otd-space-player-close { width: 30px; height: 30px; background: transparent; color: var(--otd-text-2, #657786); }
+        .otd-space-player .otd-space-player-close:hover { background: var(--otd-ghost-hover, rgba(0, 0, 0, .08)); color: var(--otd-text, #14171a); }
+        html.dark .otd-space-player .otd-space-player-close:hover { color: var(--otd-text, #fff); }
+        .otd-space-player-volume-icon { display: inline-flex; flex: none; color: var(--otd-text-2, #657786); }
+        .otd-space-player-volume-icon svg { width: 16px; height: 16px; }
+        .otd-space-player input.otd-space-player-volume { flex: 1; min-width: 40px; max-width: 140px; height: 16px; margin: 0; accent-color: var(--otd-accent-fill, #1d9bf0); }
+        .otd-space-player a.otd-space-player-open { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--otd-accent, #1d9bf0); font-size: 12px; text-decoration: none; }
+        .otd-space-player a.otd-space-player-open:hover { text-decoration: underline; }
     `);
 })();

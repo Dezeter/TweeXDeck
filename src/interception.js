@@ -3265,11 +3265,13 @@ XMLHttpRequest = function () {
                 return value;
             }
         },
+        // true, as a set trap answers for a value set: the value itself, null for a handler as hls.js sets it, made
+        // that a TypeError in strict code
         set(xhr, key, value) {
             if (key in xhr) {
                 xhr[key] = value;
             }
-            return value;
+            return true;
         },
         interceptResponseText(xhr) {
             if (xhr.proxyRoute && xhr.proxyRoute.afterRequest) {

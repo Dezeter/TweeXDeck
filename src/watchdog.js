@@ -137,8 +137,10 @@
     // the columns' requests for their new tweets, by kind of column (home, list, user): how many, the last one,
     // the last one that brought tweets, and how many went without a top cursor
     const polls = new Map();
-    // the Spaces column's last check (spaces.js): how X answered each of its sources, and what it showed
+    // the Spaces column's last check (spaces.js): how X answered each of its sources, and what it showed; how its
+    // player goes
     let spaces = null;
+    let spacesPlayer = null;
     let startedAt = 0;
 
     document.addEventListener("otd-diagnostic", e => {
@@ -158,6 +160,7 @@
         else if(entry.kind === "request") pending.set(entry.id, { method: String(entry.method), url: clean(entry.url), at: Date.now() });
         else if(entry.kind === "solver") solver = { ok: !!entry.ok, text: String(entry.text || ""), at: Date.now() };
         else if(entry.kind === "theme") theme = String(entry.text || "");
+        else if(entry.kind === "spaces-player") spacesPlayer = { state: String(entry.state || ""), error: String(entry.error || "").slice(0, 80), at: Date.now() };
         else if(entry.kind === "spaces") spaces = { fleetline: String(entry.fleetline || "—"), search: String(entry.search || "—"), details: String(entry.details || ""), live: Number(entry.live) || 0, coming: Number(entry.coming) || 0, at: Date.now() };
         else if(entry.kind === "poll") {
             const feed = String(entry.feed);
@@ -417,7 +420,7 @@
             ...[...failed.values()].map(r => `  ${describe(r)} ${times(r)}`),
             `Columns asking for new tweets: ${polls.size ? "" : "none yet"}`,
             ...[...polls].map(([feed, p]) => `  ${feed} ×${p.count} (${p.cursorless} without a top cursor), the last at ${seconds(p.at)}, the last with tweets ${p.tweets ? `at ${seconds(p.tweets)}` : "none"}`),
-            `Spaces column: ${spaces ? `fleetline ${spaces.fleetline}, search ${spaces.search}, details ${spaces.details}; ${spaces.live} live, ${spaces.coming} to come, at ${seconds(spaces.at)}` : "no news"}`,
+            `Spaces column: ${spaces ? `fleetline ${spaces.fleetline}, search ${spaces.search}, details ${spaces.details}; ${spaces.live} live, ${spaces.coming} to come, at ${seconds(spaces.at)}` : "no news"}${spacesPlayer ? `; player ${spacesPlayer.state}${spacesPlayer.error ? ` (${spacesPlayer.error})` : ""} at ${seconds(spacesPlayer.at)}` : ""}`,
             `Waiting for X: ${pending.size ? "" : "nothing"}`,
             ...waitingFor(0).map(r => `  ${r.method} ${r.url} for ${r.seconds} s`),
             `Still asked at api.x.com and answered: ${[...oldApi].map(([path, v]) => `${path} ×${v.count}`).join(", ") || "nothing"}`,
