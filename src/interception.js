@@ -992,14 +992,20 @@ async function sendNoteTweet(xhr, body) {
     respond(xhr, posted ? 200 : status >= 400 ? status : 403);
 }
 
+// the features x.com asks its home timelines with
+const HOME_FEATURES = {"rweb_video_screen_enabled":false,"profile_label_improvements_pcf_label_in_post_enabled":true,"responsive_web_profile_redirect_enabled":false,"rweb_tipjar_consumption_enabled":true,"verified_phone_label_enabled":false,"creator_subscriptions_tweet_preview_api_enabled":true,"responsive_web_graphql_timeline_navigation_enabled":true,"responsive_web_graphql_skip_user_profile_image_extensions_enabled":false,"premium_content_api_read_enabled":false,"communities_web_enable_tweet_community_results_fetch":true,"c9s_tweet_anatomy_moderator_badge_enabled":true,"responsive_web_grok_analyze_button_fetch_trends_enabled":false,"responsive_web_grok_analyze_post_followups_enabled":true,"responsive_web_jetfuel_frame":true,"responsive_web_grok_share_attachment_enabled":true,"articles_preview_enabled":true,"responsive_web_edit_tweet_api_enabled":true,"graphql_is_translatable_rweb_tweet_is_translatable_enabled":true,"view_counts_everywhere_api_enabled":true,"longform_notetweets_consumption_enabled":true,"responsive_web_twitter_article_tweet_consumption_enabled":true,"tweet_awards_web_tipping_enabled":false,"responsive_web_grok_show_grok_translated_post":false,"responsive_web_grok_analysis_button_from_backend":true,"creator_subscriptions_quote_tweet_preview_enabled":false,"freedom_of_speech_not_reach_fetch_enabled":true,"standardized_nudges_misinfo":true,"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled":true,"longform_notetweets_rich_text_read_enabled":true,"longform_notetweets_inline_media_enabled":true,"responsive_web_grok_image_annotation_enabled":true,"responsive_web_grok_imagine_annotation_enabled":true,"responsive_web_grok_community_note_auto_translation_is_enabled":false,"responsive_web_enhance_cards_enabled":false};
+// HomeTimeline's id as x.com had it (twikit 2.3.3), for when x.com's main.js can't be read, with the same features
+const HOME_TIMELINE_ID = "-X_hcgQzmHGl29-UXxz4sw";
+
 // X's For you, the timeline X picks for the user from people they follow and people they don't, for a home
-// column TweetDeck asks for with otd_timeline=foryou (for-you.js): HomeTimeline by x.com's own id and features, its
-// cursors one top and one bottom for each account, as x.com keeps them. It's asked for new tweets at most every
-// refreshInterval, as TweetDeck asks for its home timelines every few seconds.
+// column TweetDeck asks for with otd_timeline=foryou (for-you.js): HomeTimeline by x.com's own id and features, a
+// POST as x.com sends it (a GET came back without a body), its cursors one top and one bottom for each account,
+// as x.com keeps them. It's asked for new tweets at most every refreshInterval, as TweetDeck asks for its home
+// timelines every few seconds.
 async function sendForYou(xhr) {
     const user = xhr.storage.user_id;
     const top = `foryou-${user}-top`, bottom = `foryou-${user}-bottom`;
-    const variables = { count: 40, includePromotedContent: true, latestControlAvailable: true, requestContext: "launch", withCommunity: true };
+    const variables = { count: 40, includePromotedContent: true, latestControlAvailable: true, requestContext: "launch", withCommunity: true, seenTweetIds: [] };
     const skip = () => {
         xhr.storage.cancelled = true;
         emulateResponse(xhr);
@@ -1017,25 +1023,33 @@ async function sendForYou(xhr) {
         }
     }
     timings.foryou[user] = Date.now();
-    let status = 0, text = "", url = "";
+    let status = 0, text = "", url = `https://${location.hostname}/i/api/graphql/HomeTimeline`, error = "";
     try {
-        const query = await graphqlQuery("HomeTimeline", "query", "OTDhomeTimelineQuery");
+        let query;
+        try {
+            query = await graphqlQuery("HomeTimeline", "query", "OTDhomeTimelineQuery");
+        } catch (e) {
+            console.warn("HomeTimeline isn't in x.com's main.js, asked by the id it had:", e);
+            query = { id: HOME_TIMELINE_ID, features: HOME_FEATURES };
+        }
         const path = `/i/api/graphql/${query.id}/HomeTimeline`;
         url = `https://${location.hostname}${path}`;
         // as send() has them for a request it opens, which this one isn't
         const headers = { ...xhr.modReqHeaders };
         if (localStorage.device_id) headers["X-Client-UUID"] = localStorage.device_id;
-        if (window.solveChallenge) headers["x-client-transaction-id"] = await solveChallenge(path, "GET");
-        document.dispatchEvent(new CustomEvent("otd-diagnostic", { detail: JSON.stringify({ kind: "request", id: xhr.otdId, method: "GET", url }) }));
-        const res = await fetch(`${url}?${generateParams(query.features, variables)}`, { headers, credentials: "include" });
+        if (window.solveChallenge) headers["x-client-transaction-id"] = await solveChallenge(path, "POST");
+        document.dispatchEvent(new CustomEvent("otd-diagnostic", { detail: JSON.stringify({ kind: "request", id: xhr.otdId, method: "POST", url }) }));
+        const res = await fetch(url, { method: "POST", headers, credentials: "include",
+            body: JSON.stringify({ variables, features: { ...query.features, ...CASHTAG_FEATURES }, queryId: query.id }) });
         status = res.status;
         text = await res.text();
         // an id X has dropped: asked again next time
         if (status === 400 || status === 404) delete localStorage.OTDhomeTimelineQuery;
     } catch (e) {
         console.error("HomeTimeline", e);
+        error = String(e?.message || e);
     }
-    if (url) document.dispatchEvent(new CustomEvent("otd-diagnostic", { detail: JSON.stringify({ kind: "response", id: xhr.otdId, method: "GET", url, status }) }));
+    document.dispatchEvent(new CustomEvent("otd-diagnostic", { detail: JSON.stringify({ kind: "response", id: xhr.otdId, method: "POST", url, status, ...(error ? { error } : {}) }) }));
     xhr.storage.body = text;
     respond(xhr, status >= 200 && status < 300 ? 200 : status || 503);
 }
@@ -1053,7 +1067,7 @@ const proxyRoutes = [
                 let url = new URL(xhr.modUrl);
                 let params = new URLSearchParams(url.search);
                 let variables = {"count":40,"includePromotedContent":true,"latestControlAvailable":true};
-                let features = {"rweb_video_screen_enabled":false,"profile_label_improvements_pcf_label_in_post_enabled":true,"responsive_web_profile_redirect_enabled":false,"rweb_tipjar_consumption_enabled":true,"verified_phone_label_enabled":false,"creator_subscriptions_tweet_preview_api_enabled":true,"responsive_web_graphql_timeline_navigation_enabled":true,"responsive_web_graphql_skip_user_profile_image_extensions_enabled":false,"premium_content_api_read_enabled":false,"communities_web_enable_tweet_community_results_fetch":true,"c9s_tweet_anatomy_moderator_badge_enabled":true,"responsive_web_grok_analyze_button_fetch_trends_enabled":false,"responsive_web_grok_analyze_post_followups_enabled":true,"responsive_web_jetfuel_frame":true,"responsive_web_grok_share_attachment_enabled":true,"articles_preview_enabled":true,"responsive_web_edit_tweet_api_enabled":true,"graphql_is_translatable_rweb_tweet_is_translatable_enabled":true,"view_counts_everywhere_api_enabled":true,"longform_notetweets_consumption_enabled":true,"responsive_web_twitter_article_tweet_consumption_enabled":true,"tweet_awards_web_tipping_enabled":false,"responsive_web_grok_show_grok_translated_post":false,"responsive_web_grok_analysis_button_from_backend":true,"creator_subscriptions_quote_tweet_preview_enabled":false,"freedom_of_speech_not_reach_fetch_enabled":true,"standardized_nudges_misinfo":true,"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled":true,"longform_notetweets_rich_text_read_enabled":true,"longform_notetweets_inline_media_enabled":true,"responsive_web_grok_image_annotation_enabled":true,"responsive_web_grok_imagine_annotation_enabled":true,"responsive_web_grok_community_note_auto_translation_is_enabled":false,"responsive_web_enhance_cards_enabled":false};
+                let features = HOME_FEATURES;
 
                 let max_id = params.get("max_id");
                 let since_id = params.get("since_id");
@@ -1136,6 +1150,8 @@ const proxyRoutes = [
             if(xhr.storage.data) {
                 return xhr.storage.data;
             }
+            // For you's that X answered without a body, as it does an error: its status is TweetDeck's error
+            if (xhr.storage.forYou && !xhr.storage.body) return nothingNew(xhr);
             let data;
             try {
                 data = JSON.parse(xhr.storage.forYou ? xhr.storage.body : xhr.responseText);

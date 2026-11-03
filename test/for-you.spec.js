@@ -129,24 +129,25 @@ const timeline = (ids, top, bottom) => ({ data: { home: { home_timeline_urt: { i
     { entryId: `cursor-bottom-${bottom}`, content: { value: bottom } },
 ] }] } } } });
 
-async function openSender(page, answers, storage = {}) {
+async function openSender(page, answers, storage = {}, main = MAIN) {
     const asked = [];
     await openPage(page, { storage: { OTDrefreshInterval: "0", device_id: "device-1", ...storage }, routes: {
         "https://otd.test/": route => {
             const url = new URL(route.request().url());
             if(url.pathname.startsWith("/i/api/graphql/")) {
-                const variables = JSON.parse(url.searchParams.get("variables"));
-                const headers = route.request().headers();
-                asked.push({ path: url.pathname, variables, features: JSON.parse(url.searchParams.get("features")), tid: headers["x-client-transaction-id"], uuid: headers["x-client-uuid"], auth: !!headers.authorization });
+                const request = route.request(), headers = request.headers();
+                // For you's a POST with a JSON body, as x.com sends it; Following's a GET
+                const sent = request.method() === "POST" ? request.postDataJSON() : { variables: JSON.parse(url.searchParams.get("variables")), features: JSON.parse(url.searchParams.get("features")) };
+                asked.push({ path: url.pathname, method: request.method(), ...sent, tid: headers["x-client-transaction-id"], uuid: headers["x-client-uuid"], auth: !!headers.authorization });
                 const [status, body] = answers.shift();
-                return route.fulfill({ status, contentType: "application/json", headers: CORS, body: JSON.stringify(body) });
+                return route.fulfill({ status, contentType: "application/json", headers: CORS, body: typeof body === "string" ? body : JSON.stringify(body) });
             }
             asked.push({ path: url.pathname });
             return route.fulfill({ contentType: "text/html", headers: CORS, body: HOME });
         },
         "https://abs.twimg.com/": route => {
             asked.push({ path: new URL(route.request().url()).pathname });
-            return route.fulfill({ contentType: "text/javascript", headers: { "access-control-allow-origin": "*" }, body: MAIN });
+            return route.fulfill({ contentType: "text/javascript", headers: { "access-control-allow-origin": "*" }, body: main });
         },
     } });
     await page.evaluate(() => { window.solveChallenge = async (path, method) => `tid:${method}:${path}`; });
@@ -175,20 +176,21 @@ test("For you asks X's HomeTimeline by x.com's id and features; new ones by its 
     expect(await ask(page, "&otd_timeline=foryou&max_id=4")).toEqual([3, 2]);
     const graphql = asked.filter(a => a.variables);
     expect(asked.filter(a => !a.variables).map(a => a.path)).toEqual(["/", "/responsive-web/client-web/main.abc123.js"]);
-    expect(graphql.map(a => [a.path, a.variables.cursor ?? null, a.variables.requestContext])).toEqual([
-        ["/i/api/graphql/ForYou_1/HomeTimeline", null, "launch"],
-        ["/i/api/graphql/ForYou_1/HomeTimeline", "T1", "ptr"],
+    expect(graphql.map(a => [a.method, a.path, a.queryId, a.variables.cursor ?? null, a.variables.requestContext])).toEqual([
+        ["POST", "/i/api/graphql/ForYou_1/HomeTimeline", "ForYou_1", null, "launch"],
+        ["POST", "/i/api/graphql/ForYou_1/HomeTimeline", "ForYou_1", "T1", "ptr"],
         // the bottom cursor of the first page: a refresh's isn't further down
-        ["/i/api/graphql/ForYou_1/HomeTimeline", "B1", "launch"],
+        ["POST", "/i/api/graphql/ForYou_1/HomeTimeline", "ForYou_1", "B1", "launch"],
     ]);
+    expect(graphql[0].variables).toMatchObject({ count: 40, includePromotedContent: true, latestControlAvailable: true, withCommunity: true, seenTweetIds: [] });
     // the user's own value over the homepage's default; one it doesn't have is off
     expect(graphql[0].features).toMatchObject({ f_a: true, f_b: true, f_c: false });
-    expect(graphql[0]).toMatchObject({ tid: "tid:GET:/i/api/graphql/ForYou_1/HomeTimeline", uuid: "device-1", auth: true });
+    expect(graphql[0]).toMatchObject({ tid: "tid:POST:/i/api/graphql/ForYou_1/HomeTimeline", uuid: "device-1", auth: true });
 
     // Home, Following, as it was: HomeLatestTimeline, without For you's cursors
     asked.length = 0;
     expect(await ask(page, "&since_id=30")).toEqual([50, 40]);
-    expect(asked.map(a => [a.path, a.variables.cursor ?? null])).toEqual([["/i/api/graphql/cWF3cqWadLlIXA6KJWhcew/HomeLatestTimeline", null]]);
+    expect(asked.map(a => [a.method, a.path, a.variables.cursor ?? null])).toEqual([["GET", "/i/api/graphql/cWF3cqWadLlIXA6KJWhcew/HomeLatestTimeline", null]]);
 });
 
 test("For you's new tweets at most every refreshInterval; further down before a first page, nothing", async ({ page }) => {
@@ -205,4 +207,20 @@ test("X dropping HomeTimeline's id: it's looked up in main.js again next time", 
     expect(await page.evaluate(() => localStorage.OTDhomeTimelineQuery)).toBeUndefined();
     expect(await ask(page, "&otd_timeline=foryou")).toEqual([30]);
     expect(asked.filter(a => !a.variables).map(a => a.path)).toEqual(["/", "/responsive-web/client-web/main.abc123.js", "/", "/responsive-web/client-web/main.abc123.js"]);
+});
+
+test("HomeTimeline not in x.com's main.js: asked by the id x.com had, with the features of Following's", async ({ page }) => {
+    const asked = await openSender(page, [[200, timeline([30], "T1", "B1")]], {}, MAIN.split(";e.exports=")[0]);
+    expect(await ask(page, "&otd_timeline=foryou")).toEqual([30]);
+    const request = asked.find(a => a.variables);
+    expect([request.path, request.queryId]).toEqual(["/i/api/graphql/-X_hcgQzmHGl29-UXxz4sw/HomeTimeline", "-X_hcgQzmHGl29-UXxz4sw"]);
+    expect(request.features).toMatchObject({ rweb_video_screen_enabled: false, longform_notetweets_consumption_enabled: true });
+});
+
+test("X answering For you without a body: its status is TweetDeck's error, the console without a SyntaxError", async ({ page }) => {
+    const errors = [];
+    page.on("console", message => message.type() === "error" && errors.push(message.text()));
+    await openSender(page, [[422, ""]]);
+    expect(await ask(page, "&otd_timeline=foryou")).toBe(422);
+    expect(errors.filter(text => /SyntaxError|JSON/.test(text))).toEqual([]);
 });
