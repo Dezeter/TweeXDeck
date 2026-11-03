@@ -16,7 +16,7 @@
             width: "Ширина колонок", widths: { narrow: "узкие", medium: "средние", wide: "широкие", superwide: "очень широкие", flex: "по ширине окна (flex)" },
             density: "Плотность", densities: { "": "компактно", comfortable: "свободно" },
             font: "Шрифт", systemFont: "системный",
-            media: "Картинки", medias: { "": "миниатюра сбоку", whole: "целиком", strip: "полосой" },
+            media: "Фото в превью", medias: { "": "полосой", whole: "целиком" },
             on: "включить", off: "выключить" },
         en: { placeholder: "A command or column…", nothing: "Nothing found", title: "Command palette",
             tweet: "New tweet", addColumn: "Add column", search: "Search", settings: "Settings", ours: "TweeXDeck settings",
@@ -25,7 +25,7 @@
             width: "Column width", widths: { narrow: "narrow", medium: "medium", wide: "wide", superwide: "super wide", flex: "fit the window (flex)" },
             density: "Density", densities: { "": "compact", comfortable: "comfortable" },
             font: "Font", systemFont: "system",
-            media: "Media", medias: { "": "thumbnail beside the text", whole: "whole", strip: "strip" },
+            media: "Photos in previews", medias: { "": "strip", whole: "whole" },
             on: "turn on", off: "turn off" },
     });
     // TweetDeck's that ours stand in for, and its help page, long gone
@@ -60,7 +60,7 @@
         ...choice(L.density, ["", "comfortable"], L.densities, () => localStorage[OTD.DENSITY_STORAGE] || "", value => OTD.setValue(OTD.DENSITY_STORAGE, value)),
         ...choice(L.font, ["", ...OTD.FONTS.map(f => f.key)], { "": L.systemFont, ...Object.fromEntries(OTD.FONTS.map(f => [f.key, f.name])) },
             () => localStorage[OTD.FONT_STORAGE] || "", value => OTD.setValue(OTD.FONT_STORAGE, value)),
-        ...choice(L.media, ["", "whole", "strip"], L.medias, () => ["whole", "strip"].includes(localStorage[OTD.MEDIA_STORAGE]) ? localStorage[OTD.MEDIA_STORAGE] : "",
+        ...choice(L.media, ["", "whole"], L.medias, () => localStorage[OTD.MEDIA_STORAGE] === "whole" ? "whole" : "",
             value => OTD.setValue(OTD.MEDIA_STORAGE, value)),
         ...toggle("svgIcons"),
         ...toggle("modernLook"),

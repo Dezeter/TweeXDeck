@@ -23,7 +23,7 @@
             fontSize: "Размер текста", fontSizes: { smallest: "самый мелкий", small: "мелкий", medium: "средний", large: "крупный", largest: "самый крупный" },
             general: ["Тема, ширина колонок, размер текста и остальной вид — во вкладке ", "«Внешний вид»", "."],
             density: "Плотность", densities: { "": "компактно, как в TweetDeck", comfortable: "свободно: больше воздуха, текст от 15 px" },
-            media: "Картинки в колонках", medias: { "": "миниатюра сбоку в широкой колонке, под текстом в узкой", whole: "целиком", strip: "полосой, как в TweetDeck" },
+            media: "Фото в превью Medium и Large", medias: { "": "полосой, как в TweetDeck", whole: "целиком" },
             sections: { appearance: "Внешний вид", translation: "Перевод", columns: "Колонки", tweets: "Твиты", media: "Медиа", compose: "Написание", other: "Прочее" } },
         en: { lang: "Translate to", browser: "browser language", font: "Font", systemFont: "system, as in TweetDeck", reload: "Applies after a reload.", reloadNow: "Reload now", releases: "Releases and updates",
             diagnostics: "Copy diagnostics", copied: "Copied", search: "Search settings", nothing: "Nothing found",
@@ -32,7 +32,7 @@
             fontSize: "Text size", fontSizes: { smallest: "smallest", small: "small", medium: "medium", large: "large", largest: "largest" },
             general: ["The theme, column width, text size and the rest of the look are in the ", "\"Appearance\"", " tab."],
             density: "Density", densities: { "": "compact, as in TweetDeck", comfortable: "comfortable: more room, text from 15px" },
-            media: "Media in columns", medias: { "": "a thumbnail beside the text in a wide column, under it in a narrow one", whole: "whole", strip: "a strip, as in TweetDeck" },
+            media: "Photos in Medium and Large previews", medias: { "": "a strip, as in TweetDeck", whole: "whole" },
             sections: { appearance: "Appearance", translation: "Translation", columns: "Columns", tweets: "Tweets", media: "Media", compose: "Composing", other: "Other" } },
     };
     const LABEL = OTD.label(LABELS);
@@ -133,8 +133,8 @@
         [LABELS.ru.density, LABELS.en.density], changed, OTD.DENSITY_STORAGE);
 
     // media-layout.js
-    const mediaRow = changed => selectRow("otd-settings-media", LABEL.media, ["", "whole", "strip"].map(media => [media, LABEL.medias[media]]),
-        ["whole", "strip"].includes(localStorage[OTD.MEDIA_STORAGE]) ? localStorage[OTD.MEDIA_STORAGE] : "", value => OTD.setValue(OTD.MEDIA_STORAGE, value),
+    const mediaRow = changed => selectRow("otd-settings-media", LABEL.media, ["", "whole"].map(media => [media, LABEL.medias[media]]),
+        localStorage[OTD.MEDIA_STORAGE] === "whole" ? "whole" : "", value => OTD.setValue(OTD.MEDIA_STORAGE, value),
         [LABELS.ru.media, LABELS.en.media, ...Object.values(LABELS.ru.medias), ...Object.values(LABELS.en.medias)], changed, OTD.MEDIA_STORAGE);
 
     // the rows of a section: its features' switches, and under "Appearance" the selects before the switch they go with

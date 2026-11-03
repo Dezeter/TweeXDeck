@@ -17,7 +17,8 @@ const avatar = i => `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="
 
 const SIZES = { 1: [1600, 900], 2: [900, 1200], 3: [1200, 1200], 4: [800, 600], 5: [800, 600], 6: [800, 600], 7: [800, 600], 8: [1280, 720], 9: [480, 270], 10: [1000, 1000], 11: [1200, 628], 12: [1200, 628], 13: [400, 400], 14: [1500, 1000] };
 
-async function stand(page, { dark = false, width = "medium", media = "", density = "", storage = {} } = {}) {
+// size: the columns' media preview size, TweetDeck's own of a column; Small is the square beside the text
+async function stand(page, { dark = false, width = "medium", media = "", density = "", storage = {}, size = "small" } = {}) {
     await openPage(page, {
         storage: { ...storage, ...(media ? { OTDmedia: media } : {}), ...(density ? { OTDdensity: density } : {}) },
         routes: {
@@ -33,7 +34,8 @@ async function stand(page, { dark = false, width = "medium", media = "", density
     });
     await addTweetDeck(page, { css: true });
     await addAccount(page);
-    await page.evaluate(([dark, width]) => {
+    await page.evaluate(([dark, width, size]) => {
+        window.__size = size;
         if(dark) document.documentElement.classList.add("dark");
         window.__account.isContributor = () => false;
         // the counts next to the buttons, as people have them
@@ -95,7 +97,7 @@ async function stand(page, { dark = false, width = "medium", media = "", density
         ];
         window.__home = home.map(([label, json, extra]) => [label, window.__client.processTweet({ ...json, ...(extra || {}) })]);
         window.__chirps = Object.fromEntries(window.__home.map(([, c]) => [c.id, c]));
-        TD.controller.columnManager = { get: key => key === "home" ? { findChirp: id => window.__chirps[id], getMediaPreviewSize: () => "medium" } : null, getAllOrdered: () => [] };
+        TD.controller.columnManager = { get: key => key === "home" || key === "notif" ? { findChirp: id => window.__chirps[id], getMediaPreviewSize: () => size } : null, getAllOrdered: () => [] };
 
         // TweetDeck's own column header, as its columns render it
         const header = (title, icon) => TD.ui.template.render("column/column_header", {
@@ -103,7 +105,7 @@ async function stand(page, { dark = false, width = "medium", media = "", density
             columniconclass: icon, withImageAttribution: true,
         });
         const column = (key, title, body) => `<section class="js-column column" data-column="${key}"><div class="column-holder"><div class="column-panel flex flex-column height-p--100">${header(title, { home: "icon-home", notif: "icon-notifications" }[key] || "icon-user")}<div class="js-column-content column-content flex-auto position-rel flex flex-column height-p--100"><div class="js-column-scroller column-scroller position-rel scroll-v flex-auto height-p--100"><div class="js-chirp-container chirp-container">${body}</div></div></div></div></div></section>`;
-        const homeHtml = window.__home.map(([label, chirp]) => chirp.render({ mediaPreviewSize: "medium" }).replace("<article ", `<article data-otd-label="${label}" `)).join("");
+        const homeHtml = window.__home.map(([label, chirp]) => chirp.render({ mediaPreviewSize: size }).replace("<article ", `<article data-otd-label="${label}" `)).join("");
         // notifications, as X's activity JSON
         const account = window.__account;
         let at = 0;
@@ -136,7 +138,7 @@ async function stand(page, { dark = false, width = "medium", media = "", density
                 if(chirp.card && container) try { TD.ui.Column.prototype.loadCard.call({ getChirpById: () => $(container).closest("article") }, chirp, "home"); } catch(e) { console.log("card", e.message); }
             }
         };
-        const notifHtml = notifs.map(([label, chirp]) => chirp.render({ mediaPreviewSize: "medium" }).replace("<article ", `<article data-otd-label="${label || "·"}" `)).join("");
+        const notifHtml = notifs.map(([label, chirp]) => chirp.render({ mediaPreviewSize: size }).replace("<article ", `<article data-otd-label="${label || "·"}" `)).join("");
         // the opened tweet, as TweetDeck's detail view draws it
         const focal = window.__client.processTweet(withMedia(tw(301, U.a, "Закат над городом, снято на телефон. Без фильтров!", { favorite_count: 1280, retweet_count: 64, reply_count: 12, quote_count: 3 }), [photo(1)]));
         const reply = window.__client.processTweet(withMedia(tw(302, U.c, "@Badlynasty Красиво! А это мой вчерашний", { in_reply_to_status_id_str: "301", in_reply_to_user_id_str: "11", in_reply_to_screen_name: "Badlynasty", display_text_range: [12, 41] }), [photo(2)]));
@@ -155,7 +157,7 @@ async function stand(page, { dark = false, width = "medium", media = "", density
                 renderMediaGridView() { return this.media.renderGridView({ isPossiblySensitive: false }); },
                 renderMediaDetailView() { return this.media.renderDetailView({ chirpId: this.chirpId, isPossiblySensitive: false }); } }));
         };
-    }, [dark, width]);
+    }, [dark, width, size]);
 }
 
 // a picture of each tweet in <SPECIMENS_OUT>/<name>/, numbered, with their labels in labels.json, and of the top of
@@ -182,7 +184,8 @@ const layout = page => page.evaluate(() => [...document.querySelectorAll("articl
     };
     const out = [...article.querySelectorAll("*")].filter(el => el.offsetParent && !el.closest(".js-tweet-actions") && !clipped(el)).some(el => box(el).right > tweet.right + 0.5 || box(el).left < tweet.left - 0.5);
     const media = article.querySelector(".tweet-body > .js-media");
-    const square = media?.parentElement.classList.contains("otd-has-thumb") && box(media);
+    // a grouped like's or retweet's media are hidden (group-notifications.js), square or not
+    const square = media?.parentElement.classList.contains("otd-has-thumb") && media.getClientRects().length > 0 && box(media);
     const text = box(article.querySelector(".tweet-text"));
     const quote = box(article.querySelector(".tweet-body > .js-quote-detail"));
     const buttons = box(article.querySelector(".tweet-actions"));
@@ -267,7 +270,7 @@ const SCRIPTS = ["src/otd-common.js", "src/modern-look.js", "src/theme.js", "src
 // medium columns have TweetDeck's own previews under the text, super wide and flex ones the square beside it
 for(const [name, options] of Object.entries({
     "light": {}, "dark": { dark: true }, "superwide": { width: "superwide" }, "flex": { width: "flex" }, "dark-flex": { dark: true, width: "flex" },
-    "whole": { media: "whole" }, "comfortable": { density: "comfortable" },
+    "whole": { media: "whole", size: "medium" }, "medium": { width: "superwide", size: "medium" }, "comfortable": { density: "comfortable" },
 })) test(`every kind of tweet, ${name}: nothing sticks out, media beside the text where there's room, else under it, buttons last`, async ({ page }) => {
     await page.setViewportSize({ width: options.width === "flex" ? 1400 : 1000, height: 3000 });
     await stand(page, options);
@@ -278,7 +281,8 @@ for(const [name, options] of Object.entries({
     expect(tweets.filter(t => t.out).map(t => t.label)).toEqual([]);
     expect(tweets.filter(t => !t.buttonsLast).map(t => t.label)).toEqual([]);
     const squares = tweets.filter(t => t.square);
-    const side = ["superwide", "flex"].includes(options.width) && !options.media;
+    // the square in a Small column with room for it; TweetDeck's own in a Medium one
+    const side = ["superwide", "flex"].includes(options.width) && (options.size ?? "small") === "small";
     const MEDIA = ["thread with a photo", "photo, landscape", "photo, portrait", "two photos", "three photos", "four photos", "video", "gif", "sensitive", "photo and a quote", "video and a quote with a photo", "long text and a video"];
     if(side) {
         expect(squares.map(t => t.label)).toEqual(expect.arrayContaining(MEDIA));

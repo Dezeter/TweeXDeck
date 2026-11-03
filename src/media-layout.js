@@ -1,18 +1,18 @@
-// How a tweet's photos and videos show in a column, picked in Settings → TweeXDeck → Media (OTD.MEDIA_STORAGE),
-// applied at once:
-// - "thumb", the default: in a column with room for it, a small square at the top right of the text, which goes
-//   round it and on under it at full width; a quoted tweet beside it when the text is shorter than the square, the
-//   buttons under it at full width. Of several photos the
-//   square has the first with "+2"; a video has a play badge, a GIF "GIF". A quoted tweet's media is a smaller
-//   square in the quote. A click opens TweetDeck's media window as before; a video, with inline video on, opens the
-//   tweet back to full width and plays there. In a narrower column, where the text beside a square would be a few
-//   words a line, and for a GIF that a reply is, TweetDeck's own preview under the text, full width and cropped
-//   low, as X and the others show media in a timeline;
-// - "whole": a single photo whole, in its own proportions and no taller than half the screen, instead of TweetDeck's
-//   strip; several photos and videos as TweetDeck has them;
-// - "strip": TweetDeck's own strip.
-// A link card with a large picture is X's small one in a column, its picture beside the title, as the media are.
-// The tweet opened in a column's detail view and TweetDeck's "Large" previews keep TweetDeck's.
+// How a tweet's photos and videos show in a column, by TweetDeck's own "Media preview size" of the column (its
+// options), applied as it's picked:
+// - Small: in a column with room for it, a small square at the top right of the text, which goes round it and on
+//   under it at full width; a quoted tweet beside it when the text is shorter than the square, the buttons under it
+//   at full width. Of several photos the square has the first with "+2"; a video has a play badge, a GIF "GIF". A
+//   quoted tweet's media is a smaller square in the quote. A click opens TweetDeck's media window as before; a
+//   video, with inline video on, opens the tweet back to full width and plays there. In a narrower column, where
+//   the text beside a square would be a few words a line, and for a GIF that a reply is, TweetDeck's own small
+//   preview. A link card with a large picture is X's small one, its picture beside the title, as the media are.
+//   The option's picture shows the square;
+// - Hidden, Medium and Large: TweetDeck's own; with "whole" in Settings → TweeXDeck → Media (OTD.MEDIA_STORAGE), a
+//   single photo of Medium and Large whole, in its own proportions and no taller than half the screen, instead of
+//   TweetDeck's strip; several photos and videos as TweetDeck has them.
+// The tweet opened in a column's detail view keeps TweetDeck's. Before 5.20 the square was the setting's default,
+// in every column with room, whatever its preview size.
 // Loaded by injection.js after otd-common.js.
 (() => {
     // before 5.15 a switch, "mediaAspect": whole, or switched off TweetDeck's strip
@@ -20,12 +20,21 @@
         if(localStorage.OTDmediaAspect === "0" && localStorage[OTD.MEDIA_STORAGE] === undefined) localStorage[OTD.MEDIA_STORAGE] = "strip";
         localStorage.removeItem("OTDmediaAspect");
     }
-    const mode = () => ["whole", "strip"].includes(localStorage[OTD.MEDIA_STORAGE]) ? localStorage[OTD.MEDIA_STORAGE] : "thumb";
+    // "strip", TweetDeck's own, is now what nothing picked is
+    if(localStorage[OTD.MEDIA_STORAGE] === "strip") localStorage.removeItem(OTD.MEDIA_STORAGE);
     const apply = () => {
-        document.documentElement.classList.toggle("otd-media-thumb", mode() === "thumb");
-        document.documentElement.classList.toggle("otd-media-whole", mode() === "whole");
+        document.documentElement.classList.add("otd-media-thumb");
+        document.documentElement.classList.toggle("otd-media-whole", localStorage[OTD.MEDIA_STORAGE] === "whole");
         for(const media of document.querySelectorAll("[data-otd-thumb]")) fit(media);
     };
+    // a column's media preview size, as TweetDeck keeps it: "off", "small", "medium" or "large"
+    function previewSize(key) {
+        try {
+            return window.TD?.controller?.columnManager?.get?.(key)?.getMediaPreviewSize?.() || null;
+        } catch(e) {
+            return null;
+        }
+    }
     // A square only where the text beside it keeps 208px: a tweet's body 300px wide (TweetDeck's super wide and
     // wider flex columns); in narrower ones it'd be a few words a line. By column, measured on one of its tweets,
     // again when the window or a column changes
@@ -47,7 +56,7 @@
         const box = media.parentElement;
         if(!box || media.dataset.otdThumb === "off") return;
         const column = media.closest(".js-column");
-        const square = mode() === "thumb" && !("otdOpened" in media.dataset) && (!column || roomy(column)) && !gifReply(media);
+        const square = !!column && previewSize(column.dataset.column) === "small" && !("otdOpened" in media.dataset) && roomy(column) && !gifReply(media);
         box.classList.toggle(media.dataset.otdThumb === "quote" ? "otd-quote-thumb" : "otd-has-thumb", square);
         place(media);
         if(media.dataset.otdThumb === "tweet" && box.querySelector(":scope > .js-quote-detail")) watchQuote(box);
@@ -107,7 +116,7 @@
     function place(media) {
         const box = media.parentElement;
         if(!box) return;
-        const thumb = mode() === "thumb" && (box.classList.contains("otd-has-thumb") || box.classList.contains("otd-quote-thumb"));
+        const thumb = box.classList.contains("otd-has-thumb") || box.classList.contains("otd-quote-thumb");
         if(thumb && box.firstElementChild !== media) box.prepend(media);
         else if(!thumb && box.firstElementChild === media) {
             const card = box.querySelector(":scope > .js-card-container");
@@ -161,13 +170,24 @@
     const rescan = OTD.watch(scan);
     window.addEventListener("resize", rescan);
 
-    // a card is drawn for a column by TD.ui.Column's loadCard (the detail view draws its own): in thumb mode a
+    // the Small option of a column's "Media preview size": its picture the square beside the text, as TweetDeck draws
+    // the others (61 by 59, its blue when picked)
+    const smallPicture = (fill, edge) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='61' height='59' viewBox='0 0 61 59'><rect x='.5' y='.5' width='60' height='58' rx='3' fill='#fff' stroke='${edge}'/><rect x='7' y='6' width='8' height='8' rx='1' fill='${fill}'/><g fill='#e1e8ed'><rect x='17' y='8' width='17' height='2'/><rect x='8' y='18' width='26' height='3'/><rect x='8' y='24' width='26' height='3'/><rect x='8' y='30' width='19' height='3'/><rect x='8' y='37' width='46' height='3'/><rect x='8' y='43' width='31' height='3'/></g><rect x='38' y='17' width='16' height='16' rx='2' fill='${fill}'/></svg>`)}`;
+    const SMALL = { picked: smallPicture("#257abb", "#2f80be"), other: smallPicture("#aab8c3", "#ced8df") };
+    OTD.watch(() => {
+        for(const img of document.querySelectorAll('.js-toggle-item[data-value="small"] > img.media-size-image:not([data-otd-square])')) {
+            img.dataset.otdSquare = "";
+            img.src = img.classList.contains("js-selected-media") ? SMALL.picked : SMALL.other;
+        }
+    });
+
+    // a card is drawn for a column by TD.ui.Column's loadCard (the detail view draws its own): in a Small column a
     // summary_large_image goes as a summary, with the large picture as its thumbnail
     const Column = window.TD?.ui?.Column;
     const loadCard = Column?.prototype?.loadCard;
     if(loadCard) Column.prototype.loadCard = function(chirp) {
         const card = chirp?.card;
-        if(mode() !== "thumb" || card?.name !== "summary_large_image") return loadCard.apply(this, arguments);
+        if(previewSize(this?.state?.columnKey) !== "small" || card?.name !== "summary_large_image") return loadCard.apply(this, arguments);
         const values = card.binding_values || {};
         const image = values.summary_photo_image_original || values.thumbnail_image_original;
         const small = Object.create(chirp);
@@ -177,7 +197,7 @@
 
     // a video in a square plays nowhere: its tweet opens to full width first, inline-video.js plays it there
     document.addEventListener("click", e => {
-        if(mode() !== "thumb" || !OTD.isOn("inlineVideo") || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+        if(!OTD.isOn("inlineVideo") || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
         const box = e.target.closest?.('.js-media .js-media-preview-container.is-video a[rel="mediaPreview"]')?.closest(".otd-has-thumb, .otd-quote-thumb");
         if(!box) return;
         const media = box.querySelector(":scope > .js-media");
