@@ -49,7 +49,7 @@ If the original OldTweetDeck is installed, remove or disable it first: both work
 
 ### Firefox
 
-#### Nightly / Developer Edition
+#### Stable / Nightly / Developer Edition
 
 1. Go to the [Release page](https://github.com/Dezeter/TweeXDeck/releases) and download `TweeXDeckFirefox.zip`
 2. Go to Firefox Configuration Editor (`about:config`)
@@ -59,9 +59,7 @@ If the original OldTweetDeck is installed, remove or disable it first: both work
 6. Select zip file you downloaded
 7. Go to https://x.com/i/tweetdeck and enjoy old TweetDeck
 
-#### Stable
-
-**It's not recommended to use this extension on Stable version.**
+#### If not working in stable
 
 1. Go to `about:debugging#/runtime/this-firefox`
 2. Press "Load Temporary Add-on" and select zip file you downloaded
