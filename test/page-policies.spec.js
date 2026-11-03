@@ -206,3 +206,22 @@ test("Chrome's background script keeps x.com's service worker script from loadin
         { removeRuleIds: [100, 101], addRules: [] },
     ]);
 });
+
+test("Firefox's background script keeps x.com's app off TweetDeck's page, but lets main.js be read for its GraphQL ids", async ({ page }) => {
+    await firefoxBackground(page);
+    const result = await page.evaluate(() => {
+        const [navigation] = window.__listeners.navigation;
+        navigation.fn({ tabId: 7, frameId: 0, url: "https://x.com/i/tweetdeck", transitionType: "link" });
+        const blocker = window.__listeners.request.find(l => l.filter.urls.includes("https://abs.twimg.com/*"));
+        const asked = (path, type, tabId = 7) => !!blocker.fn({ url: `https://abs.twimg.com/responsive-web/client-web/${path}`, type, tabId, frameId: 0 })?.cancel;
+        return {
+            // x.com's own <script>s
+            scripts: [asked("main.2313f56808170e13a.js", "script"), asked("bundle.Spaces.abc.js", "script"), asked("ondemand.s.abc.js", "script"), asked("vendor.abc.js", "script")],
+            // what interception.js and challenge.js read by fetch
+            fetched: [asked("main.2313f56808170e13a.js", "xmlhttprequest"), asked("ondemand.s.abc.js", "xmlhttprequest"), asked("bundle.Spaces.abc.js", "xmlhttprequest")],
+            // another tab, not TweetDeck's
+            other: asked("main.2313f56808170e13a.js", "script", 8),
+        };
+    });
+    expect(result).toEqual({ scripts: [true, true, false, false], fetched: [false, false, true], other: false });
+});

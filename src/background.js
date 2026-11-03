@@ -138,7 +138,9 @@ chrome.webNavigation.onCommitted.addListener(
     { url: [{ hostSuffix: "twitter.com" }, { hostSuffix: "x.com" }] },
 );
 
-// Block requests for files related to Web App, except for main.{random}.js (which may be needed for API connection)
+// Block requests for files related to Web App on TweetDeck's page, so x.com's own app doesn't start there. Not the
+// ones read rather than run: ondemand.s and vendor, and main.{random}.js read by fetch, whose GraphQL ids and features
+// interception.js looks up (graphqlQuery); x.com's own <script> of it is still blocked.
 chrome.webRequest.onBeforeRequest.addListener(
     function (details) {
         try {
@@ -153,7 +155,8 @@ chrome.webRequest.onBeforeRequest.addListener(
                 ) &&
                 (requestFrom === "https://twitter.com/i/tweetdeck" || requestFrom === "https://x.com/i/tweetdeck") &&
                 !path.includes('ondemand.s.') &&
-                !path.includes('vendor.')
+                !path.includes('vendor.') &&
+                !(details.type === "xmlhttprequest" && /\/main\.[\w-]+\.js$/.test(path))
             ) {
                 return {
                     cancel: true,
