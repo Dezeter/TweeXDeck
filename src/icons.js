@@ -12,6 +12,7 @@
         "arrow-right": "<path d='M5 12h14'/><path d='m12 5 7 7-7 7'/>",
         "arrow-up": "<path d='m5 12 7-7 7 7'/><path d='M12 19V5'/>",
         "at-sign": "<circle cx='12' cy='12' r='4'/><path d='M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8'/>",
+        "audio-lines": "<path d='M2 10v3'/><path d='M6 6v11'/><path d='M10 3v18'/><path d='M14 8v7'/><path d='M18 5v13'/><path d='M22 10v3'/>",
         "ban": "<circle cx='12' cy='12' r='10'/><path d='M4.929 4.929 19.07 19.071'/>",
         "bell": "<path d='M10.268 21a2 2 0 0 0 3.464 0'/><path d='M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326'/>",
         "bookmark": "<path d='M17 3a2 2 0 0 1 2 2v15a1 1 0 0 1-1.496.868l-4.512-2.578a2 2 0 0 0-1.984 0l-4.512 2.578A1 1 0 0 1 5 20V5a2 2 0 0 1 2-2z'/>",
@@ -78,7 +79,7 @@
         "pointer-u": "arrow-up", "play": "play", "pause": "pause", "sound": "volume-2", "sound-off": "volume-x",
         "protected": "lock", "info": "info", "poll": "chart-bar", "analytics": "chart-column", "user-switch": "users",
         "user-team-mgr": "users", "lightning": "zap", "content": "file-text", "user-dd": "chevron-down", "blocked": "ban",
-        "move": "grip-vertical", "otd-foryou": "sparkles",
+        "move": "grip-vertical", "otd-foryou": "sparkles", "otd-spaces": "audio-lines",
     };
 
     const url = (shape, style) => {

@@ -395,3 +395,10 @@ test("the columns' requests for new tweets: how many, without a top cursor, the 
     expect(error).not.toBeNull();
     expect(error[2] - error[1]).toBe(2);
 });
+
+test("the Spaces column's last check: how X answered its fleetline, its search and the Spaces' details, what it showed", async ({ page }) => {
+    await openWatched(page);
+    expect(await askReport(page)).toContain("\nSpaces column: no news\n");
+    await diagnostic(page, { kind: "spaces", fleetline: "ok", search: "HTTP 429", details: "3 fine, 1 failed (HTTP 404)", live: 2, coming: 1 });
+    expect(await askReport(page)).toMatch(/\nSpaces column: fleetline ok, search HTTP 429, details 3 fine, 1 failed \(HTTP 404\); 2 live, 1 to come, at \d+ s\n/);
+});

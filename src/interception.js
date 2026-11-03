@@ -1071,6 +1071,11 @@ const proxyRoutes = [
 
                 let max_id = params.get("max_id");
                 let since_id = params.get("since_id");
+                // Spaces: spaces.js draws its column, its requests for tweets are answered empty without asking X
+                if (params.get("otd_timeline") === "spaces") {
+                    xhr.storage.cancelled = true;
+                    return;
+                }
                 // For you: its request is made as it's sent (sendForYou), its account known by then
                 if (params.get("otd_timeline") === "foryou") {
                     xhr.storage.forYou = true;
@@ -1111,7 +1116,7 @@ const proxyRoutes = [
             }
         },
         openHandler: (xhr, method, url, async, username, password) => {
-            if(xhr.storage.forYou) return;
+            if(xhr.storage.forYou || xhr.storage.cancelled) return;
             let user_id = xhr.modReqHeaders["x-act-as-user-id"] ?? xhr.storage.user_id ?? getCurrentUserId();
             xhr.storage.user_id = user_id;
             if(!timings.home[user_id]) {
