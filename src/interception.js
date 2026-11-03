@@ -49,6 +49,7 @@ let seenNotifications = [];
 let seenHomeTweets = {};
 let timings = {
     home: {},
+    foryou: {},
     list: {},
     user: {},
     search: {},
@@ -94,6 +95,7 @@ function nothingNew(xhr, entries) {
     return [];
 }
 const findTopCursor = entries => entries.find(e => e.entryId.startsWith("sq-cursor-top-") || e.entryId.startsWith("cursor-top-"))?.content?.value;
+const findBottomCursor = entries => entries.find(e => e.entryId.startsWith("sq-cursor-bottom-") || e.entryId.startsWith("cursor-bottom-"))?.content?.value;
 // for the load watchdog (watchdog.js): what a column's request for its new tweets brought, once a request
 function reportPoll(xhr, tweets) {
     if(!xhr.storage.poll || xhr.storage.reported) return;
@@ -931,9 +933,11 @@ function weightedLength(text) {
         return [...text].length;
     }
 }
-async function noteTweetQuery() {
+// An operation of x.com's GraphQL as x.com's own main.js has it, its id and the names of its features, with the
+// values x.com's homepage gives them; kept for a day in localStorage[storage]
+async function graphqlQuery(name, type, storage) {
     try {
-        const kept = JSON.parse(localStorage.OTDnoteTweetQuery || "null");
+        const kept = JSON.parse(localStorage[storage] || "null");
         if (kept?.id && Date.now() - kept.at < 864e5) return kept;
     } catch (e) {}
     let html = "", main;
@@ -946,18 +950,19 @@ async function noteTweetQuery() {
     if (!main) throw new Error("no main.js on x.com's homepage");
     const res = await fetch(main);
     if (!res.ok) throw new Error(`${main}: HTTP ${res.status}`);
-    const op = (await res.text()).match(/queryId:"([\w-]+)",operationName:"CreateNoteTweet",operationType:"mutation",metadata:\{featureSwitches:\[([^\]]*)\]/);
-    if (!op) throw new Error("no CreateNoteTweet in x.com's main.js");
+    const op = (await res.text()).match(new RegExp(`queryId:"([\\w-]+)",operationName:"${name}",operationType:"${type}",metadata:\\{featureSwitches:\\[([^\\]]*)\\]`));
+    if (!op) throw new Error(`no ${name} in x.com's main.js`);
     // the homepage's default, then the user's own value of each: the last one written
     const features = {};
-    for (const [, name] of op[2].matchAll(/"(\w+)"/g)) {
-        const values = [...html.matchAll(new RegExp(`"${name}":\\{"value":(true|false)`, "g"))];
-        features[name] = values.length ? values[values.length - 1][1] === "true" : false;
+    for (const [, feature] of op[2].matchAll(/"(\w+)"/g)) {
+        const values = [...html.matchAll(new RegExp(`"${feature}":\\{"value":(true|false)`, "g"))];
+        features[feature] = values.length ? values[values.length - 1][1] === "true" : false;
     }
     const query = { id: op[1], features, at: Date.now() };
-    localStorage.OTDnoteTweetQuery = JSON.stringify(query);
+    localStorage[storage] = JSON.stringify(query);
     return query;
 }
+const noteTweetQuery = () => graphqlQuery("CreateNoteTweet", "mutation", "OTDnoteTweetQuery");
 // the tweet a mutation's answer has, whatever X calls the mutation's field: create_tweet, notetweet_create
 const createdTweet = data => Object.values(data?.data || {}).find(v => v?.tweet_results?.result)?.tweet_results.result;
 async function sendNoteTweet(xhr, body) {
@@ -987,6 +992,54 @@ async function sendNoteTweet(xhr, body) {
     respond(xhr, posted ? 200 : status >= 400 ? status : 403);
 }
 
+// X's For you, the timeline X picks for the user from people they follow and people they don't, for a home
+// column TweetDeck asks for with otd_timeline=foryou (for-you.js): HomeTimeline by x.com's own id and features, its
+// cursors one top and one bottom for each account, as x.com keeps them. It's asked for new tweets at most every
+// refreshInterval, as TweetDeck asks for its home timelines every few seconds.
+async function sendForYou(xhr) {
+    const user = xhr.storage.user_id;
+    const top = `foryou-${user}-top`, bottom = `foryou-${user}-bottom`;
+    const variables = { count: 40, includePromotedContent: true, latestControlAvailable: true, requestContext: "launch", withCommunity: true };
+    const skip = () => {
+        xhr.storage.cancelled = true;
+        emulateResponse(xhr);
+    };
+    if (xhr.storage.max_id) {
+        // further down from where the last page ended; without one there's nothing further
+        if (!cursors[bottom]) return skip();
+        variables.cursor = cursors[bottom];
+    } else if (xhr.storage.since_id) {
+        if (Date.now() - (timings.foryou[user] || 0) < refreshInterval) return skip();
+        if (topCursor(top)) {
+            variables.cursor = cursors[top];
+            variables.requestContext = "ptr";
+            xhr.storage.topKey = top;
+        }
+    }
+    timings.foryou[user] = Date.now();
+    let status = 0, text = "", url = "";
+    try {
+        const query = await graphqlQuery("HomeTimeline", "query", "OTDhomeTimelineQuery");
+        const path = `/i/api/graphql/${query.id}/HomeTimeline`;
+        url = `https://${location.hostname}${path}`;
+        // as send() has them for a request it opens, which this one isn't
+        const headers = { ...xhr.modReqHeaders };
+        if (localStorage.device_id) headers["X-Client-UUID"] = localStorage.device_id;
+        if (window.solveChallenge) headers["x-client-transaction-id"] = await solveChallenge(path, "GET");
+        document.dispatchEvent(new CustomEvent("otd-diagnostic", { detail: JSON.stringify({ kind: "request", id: xhr.otdId, method: "GET", url }) }));
+        const res = await fetch(`${url}?${generateParams(query.features, variables)}`, { headers, credentials: "include" });
+        status = res.status;
+        text = await res.text();
+        // an id X has dropped: asked again next time
+        if (status === 400 || status === 404) delete localStorage.OTDhomeTimelineQuery;
+    } catch (e) {
+        console.error("HomeTimeline", e);
+    }
+    if (url) document.dispatchEvent(new CustomEvent("otd-diagnostic", { detail: JSON.stringify({ kind: "response", id: xhr.otdId, method: "GET", url, status }) }));
+    xhr.storage.body = text;
+    respond(xhr, status >= 200 && status < 300 ? 200 : status || 503);
+}
+
 let counter = 0;
 let bookmarkTimes = {};
 const OriginalXHR = XMLHttpRequest;
@@ -1004,6 +1057,15 @@ const proxyRoutes = [
 
                 let max_id = params.get("max_id");
                 let since_id = params.get("since_id");
+                // For you: its request is made as it's sent (sendForYou), its account known by then
+                if (params.get("otd_timeline") === "foryou") {
+                    xhr.storage.forYou = true;
+                    xhr.storage.max_id = max_id;
+                    xhr.storage.since_id = since_id;
+                    if (since_id) xhr.storage.poll = "foryou";
+                    xhr.modUrl = `${NEW_API}/HomeTimeline`;
+                    return;
+                }
                 let user_id = xhr.modReqHeaders["x-act-as-user-id"] ?? params.get("user_id") ?? getCurrentUserId();
                 if(params.get("user_id")) {
                     xhr.storage.user_id = params.get("user_id");
@@ -1035,6 +1097,7 @@ const proxyRoutes = [
             }
         },
         openHandler: (xhr, method, url, async, username, password) => {
+            if(xhr.storage.forYou) return;
             let user_id = xhr.modReqHeaders["x-act-as-user-id"] ?? xhr.storage.user_id ?? getCurrentUserId();
             xhr.storage.user_id = user_id;
             if(!timings.home[user_id]) {
@@ -1050,6 +1113,8 @@ const proxyRoutes = [
         sendHandler: (xhr, data) => {
             if(xhr.storage.cancelled) {
                 emulateResponse(xhr);
+            } else if(xhr.storage.forYou) {
+                sendForYou(xhr);
             } else {
                 watchTopCursor(xhr);
                 xhr.send(data);
@@ -1073,7 +1138,7 @@ const proxyRoutes = [
             }
             let data;
             try {
-                data = JSON.parse(xhr.responseText);
+                data = JSON.parse(xhr.storage.forYou ? xhr.storage.body : xhr.responseText);
             } catch (e) {
                 console.error(e);
                 return nothingNew(xhr);
@@ -1088,6 +1153,8 @@ const proxyRoutes = [
                 return nothingNew(xhr, []);
             }
             entries = entries.entries;
+            // the tweets of For you seen apart from Following's
+            const seen = xhr.storage.forYou ? `foryou-${xhr.storage.user_id}` : xhr.storage.user_id;
             let tweets = [];
             for (let e of entries) {
                 // thats a lot of trash https://lune.dimden.dev/0bf524e52eb.png
@@ -1141,12 +1208,12 @@ const proxyRoutes = [
                             pushTweets.push(tweet);
                         }
                     }
-                    if(!seenHomeTweets[xhr.storage.user_id]) {
-                        seenHomeTweets[xhr.storage.user_id] = [];
+                    if(!seenHomeTweets[seen]) {
+                        seenHomeTweets[seen] = [];
                     }
                     for(let tweet of pushTweets) {
-                        if(xhr.storage.since_id && seenHomeTweets[xhr.storage.user_id].includes(tweet.id_str)) continue;
-                        seenHomeTweets[xhr.storage.user_id].push(tweet.id_str);
+                        if(xhr.storage.since_id && seenHomeTweets[seen].includes(tweet.id_str)) continue;
+                        seenHomeTweets[seen].push(tweet.id_str);
                         tweets.push(tweet);
                     }
                 }
@@ -1158,12 +1225,22 @@ const proxyRoutes = [
             tweets.sort(
                 (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
             );
-            if(!seenHomeTweets[xhr.storage.user_id]) {
-                seenHomeTweets[xhr.storage.user_id] = [];
+            if(!seenHomeTweets[seen]) {
+                seenHomeTweets[seen] = [];
             }
             for(let tweet of tweets) {
-                if(seenHomeTweets[xhr.storage.user_id].includes(tweet.id_str)) continue;
-                seenHomeTweets[xhr.storage.user_id].push(tweet.id_str);
+                if(seenHomeTweets[seen].includes(tweet.id_str)) continue;
+                seenHomeTweets[seen].push(tweet.id_str);
+            }
+
+            // For you: the top cursor of the newest page, the bottom one of the page furthest down
+            if (xhr.storage.forYou) {
+                const top = findTopCursor(entries), bottom = findBottomCursor(entries);
+                if (top && !xhr.storage.max_id) keepTopCursor(`foryou-${xhr.storage.user_id}-top`, top);
+                if (bottom && !xhr.storage.since_id) cursors[`foryou-${xhr.storage.user_id}-bottom`] = bottom;
+                xhr.storage.data = tweets;
+                reportPoll(xhr, tweets.length);
+                return tweets;
             }
 
             let bottomCursor = entries.find(

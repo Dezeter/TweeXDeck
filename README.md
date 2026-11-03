@@ -23,7 +23,7 @@ This is an independently developed fork of [OldTweetDeck by dimden](https://gith
 - [Media as a small square beside the text](#media), or whole, instead of TweetDeck's cropped strips; [videos that play right in the tweet](#media), and [downloading media](#media) or copying its links from the tweet menu
 - [Redrafting your tweet, muting a hashtag or an app](#tweet-menu) from the tweet menu, [Mute and Block buttons](#tweet-menu) under tweets
 - [Short headers](#columns): "↩ @name" for "Replying to", your own tweet in a notification without your name over it again, a notification's icon in the avatars' column
-- [Super wide columns](#columns) of 400px, [flex columns that share the window](#columns), [columns that hold still](#columns) under the pointer, [an author's threads joined by a line](#columns), and [unread counts](#columns) in the tab title
+- [A For you column](#columns), X's own picks beside your Home, [super wide columns](#columns) of 400px, [flex columns that share the window](#columns), [columns that hold still](#columns) under the pointer, [an author's threads joined by a line](#columns), and [unread counts](#columns) in the tab title
 - [Tweet shapes while a column loads](#loading-and-empty-columns), and a plain message with a button when it's empty or X didn't answer
 - [Emoji and GIF pickers](#emoji-and-gifs) in the tweet box, and [long posts](#long-posts) up to 25,000 characters
 - [An explanation instead of an endless spinner](#when-tweetdeck-doesnt-load) when TweetDeck doesn't load, with a report to copy into an issue
@@ -205,6 +205,8 @@ The "…" menu of a tweet has more, after [Better TweetDeck](https://github.com/
 Under other people's tweets there can be **Mute** and **Block** buttons, next to reply, retweet and like. Both ask before doing it. They're off by default; switch them on in [Settings](#settings).
 
 ## Columns
+
+**For you**, X's algorithmic timeline, is a column type of its own in "Add column", under Home: what X picks for you from people you follow and people you don't, for one of your accounts. It's asked for as x.com asks for it, by the id and features of x.com's own code, read from it and kept for a day; new picks at most every 35 seconds, more as you scroll down. X's picks aren't in order of time and a TweetDeck column is, so a refresh's picks go where their time puts them, older than the column's newest too. "Add column"'s icons are over their names, as they were with TweetDeck's icon font.
 
 Settings → Appearance → Column width has a fourth width after TweetDeck's narrow, medium and wide: **Super wide**, 400px, with images and video sized for it.
 
