@@ -128,7 +128,7 @@ test("the search on a tab finds rows of every tab, in either language; a section
     expect(await sections()).toEqual(["media"]);
     expect(await shown()).toEqual(["otd-settings-media", "inlineVideo", "downloadMedia", "copyMediaLinks"]);
     // the media select by its values too
-    await search.fill("миниатюр");
+    await search.fill("полос");
     expect(await shown()).toEqual(["otd-settings-media"]);
     await search.fill("перевод");
     expect(await sections()).toEqual(["translation"]);
@@ -200,12 +200,12 @@ test("a change in another tab reaches who listens", async ({ page }) => {
     expect(await page.evaluate(() => window.__changes)).toEqual([null, "comfortable"]);
 });
 
-test("the media select: a square beside the text, whole or TweetDeck's strip, in OTDmedia", async ({ page }) => {
+test("the media select: Medium and Large photos in TweetDeck's strip or whole, in OTDmedia; the square is a column's Small", async ({ page }) => {
     await openSettings(page, { storage: { OTDmedia: "bogus" } });
     await tab(page, "Медиа");
     const select = page.locator('#otd-settings .otd-settings-section[data-section="media"] .otd-settings-media select');
     await expect(select).toHaveValue("");
-    expect(await select.locator("option").allTextContents()).toEqual(["миниатюра сбоку в широкой колонке, под текстом в узкой", "целиком", "полосой, как в TweetDeck"]);
+    expect(await select.locator("option").allTextContents()).toEqual(["полосой, как в TweetDeck", "целиком"]);
     await select.selectOption("whole");
     expect(await page.evaluate(() => localStorage.OTDmedia)).toBe("whole");
     await select.selectOption("");

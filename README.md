@@ -20,7 +20,7 @@ This is an independently developed fork of [OldTweetDeck by dimden](https://gith
 - [All replies](#all-replies-in-the-tweet-view) in the tweet view, and [your sent replies](#instant-replies) shown right away
 - [Pasting images](#pasting-images) into the compose box with Ctrl+V
 - [Links straight to the site](#links-and-time) instead of t.co, and [exact tweet times](#links-and-time) if you like
-- [Media as a small square beside the text](#media), or whole, instead of TweetDeck's cropped strips; [videos that play right in the tweet](#media), and [downloading media](#media) or copying its links from the tweet menu
+- [Media as a small square beside the text](#media), a column's "Small" media previews, and single photos whole instead of TweetDeck's cropped strips; [videos that play right in the tweet](#media), and [downloading media](#media) or copying its links from the tweet menu
 - [Redrafting your tweet, muting a hashtag or an app](#tweet-menu) from the tweet menu, [Mute and Block buttons](#tweet-menu) under tweets
 - [Short headers](#columns): "↩ @name" for "Replying to", your own tweet in a notification without your name over it again, a notification's icon in the avatars' column
 - [A For you column](#columns), X's own picks beside your Home, [super wide columns](#columns) of 400px, [flex columns that share the window](#columns), [columns that hold still](#columns) under the pointer, [an author's threads joined by a line](#columns), and [unread counts](#columns) in the tab title
@@ -104,7 +104,7 @@ The same settings are kept in `localStorage`, so they can also be changed from t
 | "Redraft" in your tweet's menu | `OTDredraft` |
 | "Mute #hashtag" and "Mute tweets from …" in the tweet menu | `OTDmuteFromMenu` |
 | Mute and Block buttons under tweets (off by default, `'1'` turns it on) | `OTDrowMuteBlock` |
-| Media in columns (a square beside the text without the key) | `OTDmedia`: `'whole'` or `'strip'` |
+| Photos in Medium and Large previews (TweetDeck's strip without the key) | `OTDmedia`: `'whole'` |
 | Videos playing in the tweet | `OTDinlineVideo` |
 | "Download media" in the tweet menu | `OTDdownloadMedia` |
 | "Copy links to media" in the tweet menu | `OTDcopyMediaLinks` |
@@ -125,7 +125,8 @@ The same settings are kept in `localStorage`, so they can also be changed from t
 ## Grok auto-translation
 
 Tweets and quoted tweets that aren't in your language are translated automatically through Grok, the same endpoint x.com uses for "Show translation". Translated tweets get a translate icon next to reply/retweet/like that switches between the original and the translation.  
-Only tweets that stay on screen are translated, at most 20 per minute, and translations are cached for 7 days.
+Only tweets that stay on screen are translated, at most 20 per minute, and translations are cached for 7 days.  
+TweetDeck's own translation, "Translate this Tweet" in a tweet's menu and "Translate Tweet" under an opened one ("Translated from … by Microsoft"), is gone, as of 5.20: Grok's translates.
 
 The language to translate to is the browser's unless you pick another in [Settings](#settings).
 
@@ -180,13 +181,15 @@ Tweet times can show the time and date instead of "5m": "14:05" for today, "26 �
 
 ## Media
 
-Settings → TweeXDeck → Media → "Media in columns" sets how a tweet's photos and videos show in a column:
+How a tweet's photos and videos show in a column is the column's own "Media preview size", in its options (the sliders over its title):
 
-- **A square beside the text**, the default, in a column wide enough for it (a tweet's text 300px wide: super wide and wider flex columns): an 80px square at the top right of the text, which goes round it and on under it at full width, the buttons under it as the tweet's last line. In a narrower column the text beside a square would be a few words a line, so the media are TweetDeck's own preview under the text, full width and cropped low, as X and other apps show them in a timeline; the column changes over as it's widened or narrowed. A GIF that is a reply plays whole, as TweetDeck shows it. Of several photos the square has the first, with "+2" for the others, a video has a play button, a GIF a "GIF" badge, sensitive media an eye to show them. A quoted tweet after a text shorter than the square rises beside it, narrower, instead of leaving the space under the text empty; after a longer text, or when the square would hang over it by less than a line, it goes under the square at full width. Its own media are a smaller square in the quote, its text round it too. A link card with a large picture is X's small card in a column, its picture beside the title. A click opens TweetDeck's media window as before; a click on a video opens the tweet back to full width and plays it there.
-- **Whole**: a tweet with one image shows it whole, in its own proportions, instead of TweetDeck's cropped strip; a very tall image stops at half the screen. Tweets with several images and videos keep TweetDeck's previews.
-- **A strip, as in TweetDeck**.
+- **Small** is a square beside the text, in a column wide enough for it (a tweet's text 300px wide: super wide and wider flex columns): an 80px square at the top right of the text, which goes round it and on under it at full width, the buttons under it as the tweet's last line. In a narrower column the text beside a square would be a few words a line, so the media are TweetDeck's own small preview under the text; the column changes over as it's widened or narrowed. A GIF that is a reply plays whole, as TweetDeck shows it. Of several photos the square has the first, with "+2" for the others, a video has a play button, a GIF a "GIF" badge, sensitive media an eye to show them. A quoted tweet after a text shorter than the square rises beside it, narrower, instead of leaving the space under the text empty; after a longer text, or when the square would hang over it by less than a line, it goes under the square at full width. Its own media are a smaller square in the quote, its text round it too. A link card with a large picture is X's small card in a column, its picture beside the title. A click opens TweetDeck's media window as before; a click on a video opens the tweet back to full width and plays it there.
+  The option's picture shows the square. Notification columns are Small unless set otherwise, as TweetDeck has them.
+- **Hidden**, **Medium** and **Large** are TweetDeck's own. Settings → TweeXDeck → Media → "Photos in Medium and Large previews" sets their single photos: in TweetDeck's cropped strip, or **whole**, in their own proportions, a very tall one stopping at half the screen. Tweets with several images and videos keep TweetDeck's previews.
 
-The tweet opened in a column, and columns set to TweetDeck's "Large" media previews, keep TweetDeck's own.
+Before 5.20 the square was the default of that setting, in every column wide enough, whatever its preview size; pick Small in a column's options for it.
+
+The tweet opened in a column keeps TweetDeck's own.
 
 A link card shows its picture also when X sends it in other sizes than the one TweetDeck reads.
 

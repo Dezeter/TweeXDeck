@@ -243,7 +243,9 @@ test("beside the square of a tweet's photo, the card goes under it, as wide as t
         const chirp = window.__client.processTweet({ id_str: "5", full_text: text, text, created_at: new Date().toUTCString(), source: "web", user,
             entities: { hashtags: [], user_mentions: [], symbols: [], urls: [], media: [photo] }, extended_entities: { media: [photo] } });
         window.__chirps["5"] = chirp;
-        document.querySelector(".js-chirp-container").insertAdjacentHTML("beforeend", chirp.render({ mediaPreviewSize: "medium" }));
+        // the square is a Small column's
+        TD.controller.columnManager = { get: key => key === "c1" ? { findChirp: id => window.__chirps[id], getMediaPreviewSize: () => "small" } : null };
+        document.querySelector(".js-chirp-container").insertAdjacentHTML("beforeend", chirp.render({ mediaPreviewSize: "small" }));
     }, OTHER);
     await page.addScriptTag({ content: read("src/media-layout.js") });
     const box = page.locator('[data-key="5"] .otd-ticker-card');

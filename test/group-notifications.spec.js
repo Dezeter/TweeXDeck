@@ -29,11 +29,12 @@ async function openColumn(page, storage, { width = 360, scripts = [] } = {}) {
             return TD.services.TwitterAction.processRESTAction(json, account)[0];
         };
         window.chirps = {};
-        TD.controller.columnManager = { get: key => key === "c1" ? { findChirp: k => window.chirps[k] } : null };
+        // a notifications column, Small as TweetDeck has them
+        TD.controller.columnManager = { get: key => key === "c1" ? { findChirp: k => window.chirps[k], getMediaPreviewSize: () => "small" } : null };
         document.body.insertAdjacentHTML("beforeend", `<section class="js-column column" data-column="c1" style="width:${width}px;display:block"><div class="js-column-scroller column-scroller"><div class="js-chirp-container chirp-container"></div></div></section>`);
         window.addChirp = (chirp, top) => {
             window.chirps[chirp.id] = chirp;
-            document.querySelector(".js-chirp-container").insertAdjacentHTML(top ? "afterbegin" : "beforeend", chirp.render({ mediaPreviewSize: "medium" }));
+            document.querySelector(".js-chirp-container").insertAdjacentHTML(top ? "afterbegin" : "beforeend", chirp.render({ mediaPreviewSize: "small" }));
         };
         [act("favorite", U.a, T.t1), act("follow", U.e, U.me), act("follow", U.f, U.me), act("follow", U.g, U.me), act("favorite", U.b, T.t1), act("favorite", U.d, T.t2), act("favorite", U.c, T.t1)].forEach(c => addChirp(c));
     }, [["#e0245e", "#17bf63", "#1da1f2", "#ffad1f", "#794bc4", "#f45d22"].map(avatar), width]);

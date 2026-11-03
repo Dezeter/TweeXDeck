@@ -1,7 +1,7 @@
 // X retiring api.x.com: interception.js answers what is gone for good itself, and moves an address X stopped
 // answering at api.x.com to x.com's own /i/api (here the page's origin, otd.test), learned from X's answers.
 const { test, expect } = require("@playwright/test");
-const { openPage, addScripts } = require("./helpers");
+const { openPage, addScripts, addTweetDeck, addAccount } = require("./helpers");
 
 const CORS = { "access-control-allow-origin": "http://otd.test", "access-control-allow-credentials": "true" };
 
@@ -159,4 +159,30 @@ test("a card without the image sizes TweetDeck draws gets its largest one, or th
         { thumbnail_image_original: "https://pbs.twimg.com/card_img/2/thumb.jpg", summary_photo_image_original: "https://pbs.twimg.com/card_img/2/thumb.jpg" },
         { summary_photo_image_original: "https://pbs.twimg.com/card_img/1/small.jpg", thumbnail_image_original: "https://pbs.twimg.com/card_img/1/small.jpg" },
     ]);
+});
+
+test("TweetDeck's own translation, Microsoft's, is off by its decider flag: no \"Translate Tweet\", Grok's translates", async ({ page }) => {
+    const asked = await open(page);
+    const decider = await page.evaluate(() => new Promise(resolve => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", "https://api.x.com/decider");
+        xhr.onload = () => resolve(JSON.parse(xhr.responseText).decider);
+        xhr.send();
+    }));
+    expect(decider.machine_translated_tweets).toBe(false);
+    expect(asked).toEqual([]);
+    // a tweet in English for a Russian TweetDeck: what its menu's "Translate this Tweet" and the opened tweet's
+    // "Translate Tweet" ask, with the flag as it is and as it was
+    await addTweetDeck(page);
+    await addAccount(page);
+    expect(await page.evaluate(decider => {
+        TD.languages.getSystemLanguageCode = () => "ru";
+        const user = { id_str: "10", screen_name: "alice", name: "alice", profile_image_url_https: "", entities: {} };
+        const chirp = window.__client.processTweet({ id_str: "1", full_text: "almond tree haha", text: "", lang: "en", created_at: new Date().toUTCString(), source: "web", user, entities: { hashtags: [], symbols: [], urls: [], user_mentions: [] } });
+        const translatable = flag => {
+            TD.decider.get = key => key === "machine_translated_tweets" ? flag : decider[key];
+            return chirp.isTranslatable();
+        };
+        return [translatable(decider.machine_translated_tweets), translatable(true)];
+    }, decider)).toEqual([false, true]);
 });
