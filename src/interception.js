@@ -962,7 +962,12 @@ async function graphqlQuery(name, type, storage) {
     localStorage[storage] = JSON.stringify(query);
     return query;
 }
-const noteTweetQuery = () => graphqlQuery("CreateNoteTweet", "mutation", "OTDnoteTweetQuery");
+// CreateNoteTweet as x.com had it in October 2026, for when x.com's main.js can't be read
+const NOTE_TWEET_QUERY = { id: "o4vMmMGVvt40x_q9DD3ehQ", features: {"premium_content_api_read_enabled":false,"communities_web_enable_tweet_community_results_fetch":true,"c9s_tweet_anatomy_moderator_badge_enabled":true,"responsive_web_grok_analyze_button_fetch_trends_enabled":false,"responsive_web_grok_analyze_post_followups_enabled":true,"rweb_cashtags_composer_attachment_enabled":true,"responsive_web_jetfuel_frame":true,"rweb_sports_post_context_enabled":true,"responsive_web_grok_share_attachment_enabled":true,"responsive_web_grok_annotations_enabled":true,"responsive_web_edit_tweet_api_enabled":true,"graphql_is_translatable_rweb_tweet_is_translatable_enabled":true,"view_counts_everywhere_api_enabled":true,"longform_notetweets_consumption_enabled":true,"responsive_web_twitter_article_tweet_consumption_enabled":true,"content_disclosure_indicator_enabled":true,"content_disclosure_ai_generated_indicator_enabled":true,"responsive_web_grok_show_grok_translated_post":true,"responsive_web_grok_analysis_button_from_backend":true,"post_ctas_fetch_enabled":false,"longform_notetweets_rich_text_read_enabled":true,"longform_notetweets_inline_media_enabled":false,"profile_label_improvements_pcf_label_in_post_enabled":true,"responsive_web_profile_redirect_enabled":true,"rweb_tipjar_consumption_enabled":false,"verified_phone_label_enabled":false,"responsive_web_nested_quote_preview_enabled":true,"articles_preview_enabled":true,"rweb_cashtags_enabled":true,"responsive_web_grok_community_note_auto_translation_is_enabled":true,"freedom_of_speech_not_reach_fetch_enabled":true,"standardized_nudges_misinfo":true,"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled":true,"responsive_web_grok_image_annotation_enabled":true,"responsive_web_grok_imagine_annotation_enabled":true,"responsive_web_graphql_timeline_navigation_enabled":true} };
+const noteTweetQuery = () => graphqlQuery("CreateNoteTweet", "mutation", "OTDnoteTweetQuery").catch(e => {
+    console.warn("CreateNoteTweet isn't in x.com's main.js or it can't be read, sent by the id x.com had:", e);
+    return NOTE_TWEET_QUERY;
+});
 // the tweet a mutation's answer has, whatever X calls the mutation's field: create_tweet, notetweet_create
 const createdTweet = data => Object.values(data?.data || {}).find(v => v?.tweet_results?.result)?.tweet_results.result;
 async function sendNoteTweet(xhr, body) {
@@ -1071,6 +1076,11 @@ const proxyRoutes = [
 
                 let max_id = params.get("max_id");
                 let since_id = params.get("since_id");
+                // Spaces: spaces.js draws its column, its requests for tweets are answered empty without asking X
+                if (params.get("otd_timeline") === "spaces") {
+                    xhr.storage.cancelled = true;
+                    return;
+                }
                 // For you: its request is made as it's sent (sendForYou), its account known by then
                 if (params.get("otd_timeline") === "foryou") {
                     xhr.storage.forYou = true;
@@ -1111,7 +1121,7 @@ const proxyRoutes = [
             }
         },
         openHandler: (xhr, method, url, async, username, password) => {
-            if(xhr.storage.forYou) return;
+            if(xhr.storage.forYou || xhr.storage.cancelled) return;
             let user_id = xhr.modReqHeaders["x-act-as-user-id"] ?? xhr.storage.user_id ?? getCurrentUserId();
             xhr.storage.user_id = user_id;
             if(!timings.home[user_id]) {

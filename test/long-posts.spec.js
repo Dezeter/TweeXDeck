@@ -47,7 +47,8 @@ const posted = text => ({ data: { notetweet_create: { tweet_results: { result: {
     note_tweet: { note_tweet_results: { result: { text, entity_set: { hashtags: [], symbols: [], urls: [], user_mentions: [] } } } },
 } } } } });
 
-async function openSender(page, answer) {
+// main: x.com's main.js, or null when it can't be read, as when Firefox's background script blocked it
+async function openSender(page, answer, main = MAIN) {
     const asked = [];
     await openPage(page, { routes: {
         "https://otd.test/": route => {
@@ -61,7 +62,8 @@ async function openSender(page, answer) {
         },
         "https://abs.twimg.com/": route => {
             asked.push(new URL(route.request().url()).pathname);
-            return route.fulfill({ contentType: "text/javascript", headers: { "access-control-allow-origin": "*" }, body: MAIN });
+            if(main === null) return route.abort();
+            return route.fulfill({ contentType: "text/javascript", headers: { "access-control-allow-origin": "*" }, body: main });
         },
     } });
     await addTweetDeck(page);
@@ -105,6 +107,21 @@ test("a post longer than 280 goes as x.com sends it: CreateNoteTweet by x.com's 
     asked.length = 0;
     await send(page, "hi");
     expect(asked.filter(a => typeof a === "string")).toEqual(["/i/api/graphql/oB-5XsHNAbjvARJEc8CZFw/CreateTweet"]);
+});
+
+test("x.com's main.js that can't be read, or without CreateNoteTweet: the post goes by the id and features x.com had", async ({ page }) => {
+    for(const main of [null, MAIN.split(";e.exports=")[0]]) {
+        const asked = await openSender(page, () => posted(LONG), main);
+        const sent = await send(page, LONG);
+        expect(sent.status).toBe(200);
+        expect(sent.body).toMatchObject({ id_str: "900", full_text: LONG });
+        expect(asked.filter(a => typeof a === "string").at(-1)).toBe("/i/api/graphql/o4vMmMGVvt40x_q9DD3ehQ/CreateNoteTweet");
+        const request = asked.find(a => a.body);
+        expect(request.body.queryId).toBe("o4vMmMGVvt40x_q9DD3ehQ");
+        expect(request.body.features).toMatchObject({ longform_notetweets_consumption_enabled: true, longform_notetweets_rich_text_read_enabled: true });
+        expect(request.body.variables).toMatchObject({ tweet_text: LONG, richtext_options: { richtext_tags: [] } });
+        await page.unrouteAll({ behavior: "ignoreErrors" });
+    }
 });
 
 test("X refusing a long post is an error for TweetDeck, with X's code and words", async ({ page }) => {

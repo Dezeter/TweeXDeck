@@ -37,7 +37,7 @@ test("\"For you\" in \"Add column\", by Home's row, with its icon; every icon ov
         const shown = [...document.querySelectorAll(".js-item-launch:not(.is-hidden)")];
         const forYou = document.querySelector('.js-item-launch[data-type="otdforyou"]');
         return {
-            order: shown.map(li => li.dataset.type).slice(0, 6),
+            order: shown.map(li => li.dataset.type).slice(0, 7),
             title: forYou.querySelector("span").textContent.trim(),
             icon: getComputedStyle(forYou.querySelector(".column-type-icon"), "::before").maskImage.startsWith('url("data:image/svg+xml'),
             // how far each icon's middle is from its name's
@@ -48,7 +48,7 @@ test("\"For you\" in \"Add column\", by Home's row, with its icon; every icon ov
             }),
         };
     });
-    expect(picker.order).toEqual(["timeline", "tweets", "interactions", "search", "otdforyou", "lists"]);
+    expect(picker.order).toEqual(["timeline", "tweets", "interactions", "search", "otdforyou", "otdspaces", "lists"]);
     expect(picker.title).toBe("For you");
     expect(picker.icon).toBe(true);
     for(const off of picker.off) expect(Math.abs(off)).toBeLessThanOrEqual(1);
