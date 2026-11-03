@@ -3,7 +3,9 @@
 // AudioSpaceById; what the people the user follows do in each, hosting, speaking or listening; X asked again on its
 // own, not while the page is hidden; its column's requests for tweets answered empty without asking X.
 const { test, expect } = require("@playwright/test");
-const { openPage, addTweetDeck, addScripts } = require("./helpers");
+const fs = require("fs");
+const path = require("path");
+const { ROOT, openPage, addTweetDeck, addScripts } = require("./helpers");
 
 test.use({ locale: "ru-RU", timezoneId: "Europe/Moscow", viewport: { width: 700, height: 900 } });
 
@@ -16,6 +18,8 @@ const MAIN = 'e.exports={queryId:"Space_1",operationName:"AudioSpaceById",operat
 
 // people: Alice's id bigger than a JavaScript number keeps, as most are now
 const ALICE = "1600000000000000001";
+// a Space's audio as HLS: 6 s of a tone in MP3, in three segments and a short one
+const FIXTURES = path.join(__dirname, "fixtures", "space");
 const person = (id, name) => ({ periscope_user_id: `p${id}`, display_name: name, twitter_screen_name: name.toLowerCase(), avatar_url: `https://pbs.twimg.com/profile_images/${id}/a_normal.jpg`, user_results: { rest_id: id, result: { __typename: "User" } } });
 const host = (id, name) => ({ result: { __typename: "User", rest_id: id, core: { name, screen_name: name.toLowerCase() }, avatar: { image_url: `https://pbs.twimg.com/profile_images/${id}/h_normal.jpg` } } });
 const audioSpace = ({ id, state, title = "", creator, started, scheduled, listening = 0, admins = [], speakers = [], listeners = [] }) => ({ data: { audioSpace: {
@@ -65,11 +69,18 @@ async function open(page, { user = "1", main = MAIN, answer = {}, clock = "fixed
     if(clock === "fixed") await page.clock.setFixedTime(NOW);
     else await page.clock.install({ time: NOW });
     const asked = [];
-    const answers = { fleetline: () => [200, FLEETLINE], search: () => [200, SEARCH], space: id => [200, SPACES[id] ?? { data: {} }], ...answer };
+    const answers = { fleetline: () => [200, FLEETLINE], search: () => [200, SEARCH], space: id => [200, SPACES[id] ?? { data: {} }],
+        stream: key => [200, { source: { location: `https://stream.test/${key}/playlist.m3u8?type=live`, status: "LIVE_PUBLIC", streamType: "HLS" }, chatToken: "chat-1" }],
+        // the Space's audio: a live one's playlist without its end, as X's is until the Space ends
+        playlist: () => fs.readFileSync(path.join(FIXTURES, "playlist.m3u8"), "utf8").replace("#EXT-X-ENDLIST\n", ""), ...answer };
     const reply = (route, [status, body]) => route.fulfill({ status, contentType: "application/json", headers: CORS, body: typeof body === "string" ? body : JSON.stringify(body) });
     await openPage(page, { storage: { device_id: "device-1" }, routes: {
         "https://otd.test/": route => {
             const request = route.request(), url = new URL(request.url()), actAs = request.headers()["x-act-as-user-id"] || null;
+            if(url.pathname.startsWith("/i/api/1.1/live_video_stream/status/")) {
+                asked.push({ path: url.pathname, query: url.search, actAs });
+                return reply(route, answers.stream(decodeURIComponent(url.pathname.split("/").pop())));
+            }
             if(url.pathname === "/i/api/fleets/v1/fleetline") {
                 asked.push({ path: url.pathname, query: url.search, actAs });
                 return reply(route, answers.fleetline());
@@ -82,6 +93,19 @@ async function open(page, { user = "1", main = MAIN, answer = {}, clock = "fixed
             asked.push({ path: url.pathname });
             return route.fulfill({ contentType: "text/html", headers: CORS, body: HOME });
         },
+        // the extension's own files
+        "http://otd.test/ext/": route => {
+            const file = new URL(route.request().url()).pathname.replace("/ext/", "");
+            asked.push({ path: `/ext/${file}` });
+            return route.fulfill({ contentType: "text/javascript", body: fs.readFileSync(path.join(ROOT, file)) });
+        },
+        "https://stream.test/": route => {
+            const name = new URL(route.request().url()).pathname.split("/").pop();
+            asked.push({ path: `/stream/${name}` });
+            const headers = { "access-control-allow-origin": "*" };
+            if(name.endsWith(".m3u8")) return route.fulfill({ contentType: "application/vnd.apple.mpegurl", headers, body: answers.playlist() });
+            return route.fulfill({ contentType: "video/mp2t", headers, body: fs.readFileSync(path.join(FIXTURES, name)) });
+        },
         "https://abs.twimg.com/": route => {
             asked.push({ path: new URL(route.request().url()).pathname });
             return route.fulfill({ contentType: "text/javascript", headers: { "access-control-allow-origin": "*" }, body: main });
@@ -90,9 +114,16 @@ async function open(page, { user = "1", main = MAIN, answer = {}, clock = "fixed
     await page.evaluate(() => {
         window.solveChallenge = async (path, method) => `tid:${method}:${path}`;
         window.__told = [];
+        document.documentElement.dataset.otdBase = "http://otd.test/ext/";
+        // the audio elements played
+        const play = HTMLMediaElement.prototype.play;
+        HTMLMediaElement.prototype.play = function() {
+            window.__audio = this;
+            return play.call(this);
+        };
         document.addEventListener("otd-diagnostic", e => {
             const entry = JSON.parse(e.detail);
-            if(entry.kind === "spaces") window.__told.push(entry);
+            if(entry.kind === "spaces" || entry.kind === "spaces-player") window.__told.push(entry);
         });
     });
     await addScripts(page, "src/interception.js");
@@ -130,7 +161,9 @@ const shown = page => page.evaluate(() => {
             people: text(card.querySelector(".otd-space-people")),
             yours: text(card.querySelector(".otd-space-yours")),
             button: text(card.querySelector(".otd-space-listen")),
-            href: card.querySelector(".otd-space-listen").href,
+            href: card.querySelector(".otd-space-title").href,
+            // a live one's plays here, a scheduled one's is a link to x.com
+            plays: card.querySelector(".otd-space-listen").tagName === "BUTTON",
         })),
         message: [...box.querySelectorAll(".otd-spaces-state > *")].map(text),
         checked: text(box.querySelector(".otd-spaces-checked")),
@@ -144,10 +177,10 @@ test("live ones first, the ones the people you follow host first, then the ones 
     const column = await shown(page);
     expect(column.headings).toEqual(["В эфире · 2", "Запланированы · 2"]);
     expect(column.cards).toEqual([
-        { id: "1LiveBBBBBBBB", top: "В эфире идёт 1 ч 10 мин", title: "Спейс · Carl", host: "Carl @carl", faces: 0, people: "5 слушателей", yours: null, button: "Слушать", href: "https://x.com/i/spaces/1LiveBBBBBBBB" },
-        { id: "1LiveAAAAAAAA", top: "В эфире идёт 25 мин", title: "Утренний <b>эфир</b>", host: "Hana @hana", faces: 2, people: "1 234 слушателя", yours: "Из ваших подписок: Alice выступает · Bob слушает", button: "Слушать", href: "https://x.com/i/spaces/1LiveAAAAAAAA" },
-        { id: "1SoonDDDDDDDD", top: "Запланирован начнётся сегодня в 17:00", title: "Вечерний разбор", host: "Eve @eve", faces: 0, people: null, yours: null, button: "Открыть на x.com", href: "https://x.com/i/spaces/1SoonDDDDDDDD" },
-        { id: "1NextEEEEEEEE", top: "Запланирован начнётся завтра в 10:00", title: "Завтрашний", host: "Finn @finn", faces: 0, people: null, yours: null, button: "Открыть на x.com", href: "https://x.com/i/spaces/1NextEEEEEEEE" },
+        { id: "1LiveBBBBBBBB", top: "В эфире идёт 1 ч 10 мин", title: "Спейс · Carl", host: "Carl @carl", faces: 0, people: "5 слушателей", yours: null, button: "Слушать", href: "https://x.com/i/spaces/1LiveBBBBBBBB", plays: true },
+        { id: "1LiveAAAAAAAA", top: "В эфире идёт 25 мин", title: "Утренний <b>эфир</b>", host: "Hana @hana", faces: 2, people: "1 234 слушателя", yours: "Из ваших подписок: Alice выступает · Bob слушает", button: "Слушать", href: "https://x.com/i/spaces/1LiveAAAAAAAA", plays: true },
+        { id: "1SoonDDDDDDDD", top: "Запланирован начнётся сегодня в 17:00", title: "Вечерний разбор", host: "Eve @eve", faces: 0, people: null, yours: null, button: "Открыть на x.com", href: "https://x.com/i/spaces/1SoonDDDDDDDD", plays: false },
+        { id: "1NextEEEEEEEE", top: "Запланирован начнётся завтра в 10:00", title: "Завтрашний", host: "Finn @finn", faces: 0, people: null, yours: null, button: "Открыть на x.com", href: "https://x.com/i/spaces/1NextEEEEEEEE", plays: false },
     ]);
     expect(column.checked).toBe("Проверено в 15:00 · Обновить");
     // a title is text, not markup
@@ -289,4 +322,95 @@ test("the column in the light theme, the dark one and Lights out: cards on the c
         expect(look.badge, theme).toBe(theme === "light" ? "rgb(208, 48, 79)" : "rgb(255, 107, 129)");
         expect(look.button, theme).toBe("rgb(68, 102, 238)");
     }
+});
+
+// --- listening ---------------------------------------------------------------------------------------------------
+const playerShown = page => page.evaluate(() => {
+    const box = document.querySelector(".otd-space-player");
+    return box && {
+        column: box.closest("[data-column]")?.dataset.column,
+        title: box.querySelector(".otd-space-player-title").textContent,
+        state: box.querySelector(".otd-space-player-state").textContent,
+        toggle: box.querySelector(".otd-space-player-toggle").hidden ? null : box.querySelector(".otd-space-player-toggle").getAttribute("aria-label"),
+        open: box.querySelector(".otd-space-player-open").href,
+    };
+});
+const listenButton = (page, id) => page.locator(`[data-column="s1"] .otd-space[data-space-id="${id}"] .otd-space-listen`);
+const audio = page => page.evaluate(() => window.__audio && { time: window.__audio.currentTime, paused: window.__audio.paused, volume: window.__audio.volume, src: !!window.__audio.getAttribute("src") || !!window.__audio.srcObject || window.__audio.currentSrc !== "" });
+
+test("Listen plays a live Space right in TweetDeck: its stream from live_video_stream, hls.js, a player on top of the column", async ({ page }) => {
+    const asked = await open(page);
+    await expect.poll(() => cards(page)).toBe(4);
+    // the scheduled ones still open on x.com
+    expect(await page.locator('[data-column="s1"] .is-coming a.otd-space-listen').count()).toBe(2);
+    await listenButton(page, "1LiveAAAAAAAA").click();
+    await expect.poll(async () => (await audio(page))?.time ?? 0, { timeout: 15000 }).toBeGreaterThan(0.5);
+    expect(await playerShown(page)).toEqual({ column: "s1", title: "Утренний <b>эфир</b>", state: "В эфире · Hana", toggle: "Пауза", open: "https://x.com/i/spaces/1LiveAAAAAAAA" });
+    expect(await page.locator(".otd-space-player b").count()).toBe(0);
+    // asked for its stream by its media key, as x.com asks; hls.js loaded from the extension once, the stream's playlist and segments
+    expect(asked.filter(a => a.path.startsWith("/i/api/1.1/live_video_stream/"))).toEqual([{ path: "/i/api/1.1/live_video_stream/status/28_1LiveAAAAAAAA", query: "?client=web&use_syndication_guest_id=false&cookie_set_host=otd.test", actAs: null }]);
+    expect(asked.filter(a => a.path.startsWith("/ext/")).map(a => a.path)).toEqual(["/ext/files/hls/hls.light.min.js"]);
+    expect(asked.some(a => a.path === "/stream/s0.ts")).toBe(true);
+    // its card's button pauses it
+    await expect(listenButton(page, "1LiveAAAAAAAA")).toHaveText("Пауза");
+    await listenButton(page, "1LiveAAAAAAAA").click();
+    await expect.poll(async () => (await playerShown(page)).state).toBe("На паузе");
+    expect((await audio(page)).paused).toBe(true);
+    await expect(listenButton(page, "1LiveAAAAAAAA")).toHaveText("Слушать");
+    // the player's ▶ goes on
+    await page.click(".otd-space-player-toggle");
+    await expect.poll(async () => (await audio(page)).paused).toBe(false);
+
+    // the volume, kept for the next time
+    await page.locator(".otd-space-player-volume").fill("0.3");
+    expect([(await audio(page)).volume, await page.evaluate(() => localStorage.OTDspacesVolume)]).toEqual([0.3, "0.3"]);
+
+    // another one: the first one let go of
+    await listenButton(page, "1LiveBBBBBBBB").click();
+    await expect.poll(async () => (await playerShown(page))?.title).toBe("Спейс · Carl");
+    await expect.poll(async () => (await audio(page))?.time ?? 0, { timeout: 15000 }).toBeGreaterThan(0.5);
+    expect((await audio(page)).volume).toBe(0.3);
+    await expect(listenButton(page, "1LiveAAAAAAAA")).toHaveText("Слушать");
+    expect(await page.locator(".otd-space-player").count()).toBe(1);
+
+    // closed: the music stops, the player's gone
+    const played = await page.evaluateHandle(() => window.__audio);
+    await page.click(".otd-space-player-close");
+    expect(await playerShown(page)).toBeNull();
+    expect(await played.evaluate(a => a.paused)).toBe(true);
+    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").map(e => e.state).at(-1))).toBe("stopped");
+});
+
+test("a Space whose stream ends: the player says it has ended", async ({ page }) => {
+    // the whole of it, its end too
+    await open(page, { answer: { playlist: () => fs.readFileSync(path.join(FIXTURES, "playlist.m3u8"), "utf8") } });
+    await expect.poll(() => cards(page)).toBe(4);
+    await listenButton(page, "1LiveAAAAAAAA").click();
+    await expect.poll(async () => (await playerShown(page))?.state, { timeout: 20000 }).toBe("Спейс закончился");
+    expect((await playerShown(page)).toggle).toBeNull();
+});
+
+test("X not giving a Space's stream: the player says it couldn't connect, and tries again", async ({ page }) => {
+    let refused = true;
+    await open(page, { answer: { stream: key => refused ? [404, ""] : [200, { source: { location: `https://stream.test/${key}/playlist.m3u8`, status: "LIVE_PUBLIC" } }] } });
+    await expect.poll(() => cards(page)).toBe(4);
+    await listenButton(page, "1LiveAAAAAAAA").click();
+    await expect.poll(async () => (await playerShown(page))?.state).toBe("Не удалось подключиться (HTTP 404)");
+    expect((await playerShown(page)).toggle).toBe("Ещё раз");
+    refused = false;
+    await page.click(".otd-space-player-toggle");
+    await expect.poll(async () => (await audio(page))?.time ?? 0, { timeout: 15000 }).toBeGreaterThan(0.5);
+    expect((await playerShown(page)).state).toBe("В эфире · Hana");
+});
+
+test("hls.js goes on the page as a global even where the page has an AMD loader", async ({ page }) => {
+    await open(page);
+    await expect.poll(() => cards(page)).toBe(4);
+    await page.evaluate(() => {
+        window.define = () => { window.__defined = true; };
+        window.define.amd = {};
+    });
+    await listenButton(page, "1LiveAAAAAAAA").click();
+    await expect.poll(async () => (await audio(page))?.time ?? 0, { timeout: 15000 }).toBeGreaterThan(0.5);
+    expect(await page.evaluate(() => [typeof window.Hls, !!window.__defined, typeof window.define])).toEqual(["function", false, "function"]);
 });
