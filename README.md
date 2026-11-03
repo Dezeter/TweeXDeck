@@ -125,7 +125,8 @@ The same settings are kept in `localStorage`, so they can also be changed from t
 ## Grok auto-translation
 
 Tweets and quoted tweets that aren't in your language are translated automatically through Grok, the same endpoint x.com uses for "Show translation". Translated tweets get a translate icon next to reply/retweet/like that switches between the original and the translation.  
-Only tweets that stay on screen are translated, at most 20 per minute, and translations are cached for 7 days.
+Only tweets that stay on screen are translated, at most 20 per minute, and translations are cached for 7 days.  
+TweetDeck's own translation, "Translate this Tweet" in a tweet's menu and "Translate Tweet" under an opened one ("Translated from … by Microsoft"), is gone, as of 5.20: Grok's translates.
 
 The language to translate to is the browser's unless you pick another in [Settings](#settings).
 
