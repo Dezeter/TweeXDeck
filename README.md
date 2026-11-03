@@ -61,8 +61,6 @@ If the original OldTweetDeck is installed, remove or disable it first: both work
 
 #### If not working in stable
 
-**It's not recommended to use this extension on Stable version.**
-
 1. Go to `about:debugging#/runtime/this-firefox`
 2. Press "Load Temporary Add-on" and select zip file you downloaded
 3. **Installing this way on Firefox will remove it after closing browser.**
