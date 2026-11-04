@@ -84,6 +84,10 @@ async function open(page, { user = "1", main = MAIN, answer = {}, clock = "fixed
     const answers = { fleetline: () => [200, FLEETLINE], search: () => [200, SEARCH], space: id => [200, SPACES[id] ?? { data: {} }],
         stream: key => [200, { source: { location: `https://stream.test/${key}/playlist.m3u8?type=live`, status: "LIVE_PUBLIC", streamType: "HLS" }, chatToken: "chat-1" }],
         chat: () => [200, { access_token: "access-1", endpoint: "https://chat.test", room_id: "room-1", replay_endpoint: "https://chat.test" }],
+        // a signed in listener's way to the chat: X's JWT for Periscope, Periscope's login with it, the chat with that
+        periscope: () => [200, { data: { authenticate_periscope: "jwt-1" } }],
+        login: () => [200, { cookie: "cookie-1", user: { id: "p1" } }],
+        signedChat: () => [200, { access_token: "access-2", endpoint: "https://chat.test", room_id: "room-1" }],
         // the Space's audio: a live one's playlist, a segment more every 2 s, as X's is until the Space ends
         playlist: live(), ...answer };
     const reply = (route, [status, body]) => route.fulfill({ status, contentType: "application/json", headers: CORS, body: typeof body === "string" ? body : JSON.stringify(body) });
@@ -108,7 +112,7 @@ async function open(page, { user = "1", main = MAIN, answer = {}, clock = "fixed
             if(url.pathname.startsWith("/i/api/graphql/")) {
                 const variables = JSON.parse(url.searchParams.get("variables")), features = JSON.parse(url.searchParams.get("features"));
                 asked.push({ path: url.pathname, variables, features, actAs });
-                return reply(route, url.pathname.endsWith("/SearchTimeline") ? answers.search() : answers.space(variables.id));
+                return reply(route, url.pathname.endsWith("/SearchTimeline") ? answers.search() : url.pathname.endsWith("/AuthenticatePeriscope") ? answers.periscope() : answers.space(variables.id));
             }
             asked.push({ path: url.pathname });
             return route.fulfill({ contentType: "text/html", headers: CORS, body: HOME });
@@ -129,8 +133,9 @@ async function open(page, { user = "1", main = MAIN, answer = {}, clock = "fixed
         // the Space's chat: its address and token for the stream's chat token
         "https://proxsee.pscp.tv/": route => {
             const request = route.request();
-            asked.push({ path: `/pscp${new URL(request.url()).pathname}`, body: request.postDataJSON() });
-            return reply(route, answers.chat());
+            const method = new URL(request.url()).pathname.split("/").pop();
+            asked.push({ path: `/pscp${new URL(request.url()).pathname}`, body: request.postDataJSON(), agent: request.headers()["x-periscope-user-agent"] || null });
+            return reply(route, { accessChatPublic: answers.chat, loginTwitterToken: answers.login, accessChat: answers.signedChat }[method]?.() ?? [404, ""]);
         },
         "https://abs.twimg.com/": route => {
             asked.push({ path: new URL(route.request().url()).pathname });
@@ -491,7 +496,7 @@ test("the player shows who's on stage, and from the Space's chat who speaks and 
 
     // the chat asked for as x.com's listeners do: its address for the stream's chat token, then told its token and room
     await expect.poll(() => asked.chat.sent.length).toBe(2);
-    expect(asked.find(a => a.path.startsWith("/pscp/"))).toEqual({ path: "/pscp/api/v2/accessChatPublic", body: { chat_token: "chat-1" } });
+    expect(asked.filter(a => a.path.startsWith("/pscp/"))).toEqual([{ path: "/pscp/api/v2/accessChatPublic", body: { chat_token: "chat-1" }, agent: "Twitter/m5" }]);
     expect(asked.chat.sent.map(m => [m.kind, JSON.parse(m.payload)])).toEqual([
         [3, { access_token: "access-1" }],
         [2, { body: JSON.stringify({ room: "room-1" }), kind: 1 }],
@@ -543,21 +548,49 @@ test("the player shows who's on stage, and from the Space's chat who speaks and 
     // for the load watchdog: the chat open, its captions, its kinds of messages by their fields' names only
     asked.chat.socket.send(chatMessage(2, { occupancy: 40, total_participants: 50 }));
     await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).messages)).toEqual(["1:45:body,final,timestamp,type,username", "2:-:occupancy,total_participants"]);
-    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1))).toMatchObject({ state: "playing", chat: "open", captions: 4 });
+    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1))).toMatchObject({ state: "playing", chat: "open, as a guest", captions: 4 });
 
     // closed: the chat too
     await page.click(".otd-space-player-close");
     await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).chat)).toBe("closed");
 });
 
-test("the chat not to be had: the Space plays all the same", async ({ page }) => {
-    const asked = await open(page, { answer: { chat: () => [403, ""] } });
+test("the chat not to be had, as a guest or signed in: the Space plays all the same", async ({ page }) => {
+    const asked = await open(page, { answer: { chat: () => [403, ""], signedChat: () => [403, ""] } });
     await expect.poll(() => cards(page)).toBe(4);
     await listenButton(page, "1LiveAAAAAAAA").click();
     await plays(page, 0.5);
     expect((await playerShown(page)).state).toBe("В эфире · Hana");
     expect(asked.chat.socket).toBeNull();
-    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1))).toMatchObject({ state: "playing", chat: "HTTP 403", captions: 0 });
+    await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).chat)).toBe("accessChat: HTTP 403");
+    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1))).toMatchObject({ state: "playing", captions: 0 });
+    // refused with the login kept, it's asked again with a new one, once
+    expect(asked.filter(a => a.path.startsWith("/pscp/")).map(a => a.path)).toEqual(["/pscp/api/v2/accessChatPublic", "/pscp/api/v2/loginTwitterToken", "/pscp/api/v2/accessChat", "/pscp/api/v2/loginTwitterToken", "/pscp/api/v2/accessChat"]);
+});
+
+test("a Space whose chat a guest gets no address of: the chat as x.com's signed in listeners get it, the login kept", async ({ page }) => {
+    // as X answered a signed in listener: a guest's token, the chat's address empty
+    const asked = await open(page, { user: "7", answer: { chat: () => [200, { access_token: "guest", endpoint: "", room_id: "room-1" }] } });
+    await expect.poll(() => cards(page)).toBe(4);
+    await listenButton(page, "1LiveAAAAAAAA").click();
+    await expect.poll(() => asked.chat.sent.length).toBe(2);
+    const steps = asked.filter(a => a.path.startsWith("/pscp/") || a.path.endsWith("/AuthenticatePeriscope"));
+    expect(steps.map(a => a.path)).toEqual(["/pscp/api/v2/accessChatPublic", "/i/api/graphql/r7VUmxbfqNkx7uwjgONSNw/AuthenticatePeriscope", "/pscp/api/v2/loginTwitterToken", "/pscp/api/v2/accessChat"]);
+    // X's JWT as the column's account, for Periscope's login; the chat with its cookie
+    expect(steps[1]).toMatchObject({ variables: {}, features: {}, actAs: "7" });
+    expect(steps[2].body).toEqual({ jwt: "jwt-1", vendor_id: "m5-proxsee-login-a2011357b73e", create_user: true });
+    expect(steps[3].body).toEqual({ chat_token: "chat-1", cookie: "cookie-1" });
+    // the chat told the signed in token
+    expect(JSON.parse(asked.chat.sent[0].payload)).toEqual({ access_token: "access-2" });
+    await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).chat)).toBe("open, signed in");
+    asked.chat.socket.send(caption("alice", "Привет"));
+    await expect.poll(() => playerShown(page).then(p => p.state)).toBe("Говорит Alice");
+
+    // another Space: the login kept, no new one
+    const before = asked.filter(a => a.path === "/pscp/api/v2/loginTwitterToken").length;
+    await listenButton(page, "1LiveBBBBBBBB").click();
+    await expect.poll(() => asked.filter(a => a.path === "/pscp/api/v2/accessChat").length).toBe(2);
+    expect(asked.filter(a => a.path === "/pscp/api/v2/loginTwitterToken").length).toBe(before);
 });
 
 test("the player's buttons and the cards' keep their look in the dark theme with the pointer over them and pressed", async ({ page }) => {

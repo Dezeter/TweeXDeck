@@ -720,9 +720,11 @@
     }
 
     // --- the Space's chat: who speaks, what they say -----------------------------------------------------------
-    // As x.com's listeners have it: the stream's chat token for the chat's address and a token of its own
-    // (proxsee.pscp.tv's accessChatPublic), a WebSocket there (chatapi/v1/chatnow) told that token and the room. While
-    // the Space has captions on, they come in it with who says them: { body, username, final }.
+    // As x.com's listeners have it: the stream's chat token for the chat's address and a token of its own, a
+    // WebSocket there (chatapi/v1/chatnow) told that token and the room. The address comes from proxsee.pscp.tv's
+    // accessChatPublic, as a guest's does; where that one has none, as a signed in listener's: X's
+    // AuthenticatePeriscope for a Periscope login (loginTwitterToken), kept for the page's while, then accessChat with
+    // it. While the Space has captions on, they come in the chat with who says them: { body, username, final }.
     const CAPTIONS_STORAGE = "OTDspacesCaptions";
     // "1" while the captions are across the whole column, with what was said before
     const WIDE_STORAGE = "OTDspacesCaptionsWide";
@@ -730,7 +732,8 @@
     // someone speaks as long as their captions come, and a little after; a caption stays a while after the last
     const SPEAKING_FOR = 3000, CAPTION_FOR = 8000;
     // lines: what was said, by whom, the last one as it's said
-    const chat = { socket: null, token: null, status: "", captions: 0, shapes: new Map(), speaker: null, caption: null, lines: [], timer: 0, retries: 0 };
+    // via: how its address came, as a guest or signed in
+    const chat = { socket: null, token: null, status: "", via: "", captions: 0, shapes: new Map(), speaker: null, caption: null, lines: [], timer: 0, retries: 0 };
     const captionsOn = () => localStorage[CAPTIONS_STORAGE] !== "0";
     const json = text => {
         if(typeof text !== "string") return text && typeof text === "object" ? text : null;
@@ -745,19 +748,73 @@
         Object.assign(chat, { token, status: chatToken ? "connecting" : "no chat token", captions: 0, shapes: new Map(), speaker: null, caption: null, lines: [], retries: 0 });
         report();
         if(!chatToken) return;
+        const user = player.user;
         try {
-            const res = await fetch("https://proxsee.pscp.tv/api/v2/accessChatPublic", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chat_token: chatToken }) });
-            if(!res.ok) throw failure(`HTTP ${res.status}`, res.status);
-            const access = await res.json();
+            let access = await proxsee("accessChatPublic", { chat_token: chatToken }).catch(() => null);
             if(chat.token !== token) return;
-            const endpoint = new URL(access?.endpoint);
-            if(endpoint.protocol !== "https:" || !access.access_token) throw failure("no chat address");
-            connect(`wss://${endpoint.host}/chatapi/v1/chatnow`, String(access.access_token), String(access.room_id || player.space?.id || ""), token);
+            chat.via = "as a guest";
+            if(!chatAddress(access)) {
+                chat.via = "signed in";
+                access = await signedIn(user, cookie => proxsee("accessChat", { chat_token: chatToken, cookie }));
+                if(chat.token !== token) return;
+            }
+            const address = chatAddress(access);
+            if(!address) throw failure("no chat address");
+            connect(address, String(access.access_token), String(access.room_id || player.space?.id || ""), token);
         } catch(e) {
             if(chat.token !== token) return;
-            chat.status = describe(e);
+            // which of its steps it was, with X's status
+            chat.status = String(e?.message || e).slice(0, 80);
             report();
         }
+    }
+    // the chat's WebSocket address in an answer that has its token, or null
+    function chatAddress(access) {
+        try {
+            const endpoint = new URL(access?.endpoint);
+            return endpoint.protocol === "https:" && access.access_token ? `wss://${endpoint.host}/chatapi/v1/chatnow` : null;
+        } catch(e) {
+            return null;
+        }
+    }
+    // proxsee.pscp.tv's API, with the headers x.com sends it
+    async function proxsee(method, body) {
+        const res = await fetch(`https://proxsee.pscp.tv/api/v2/${method}`, {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-periscope-user-agent": "Twitter/m5", "x-idempotence": String(Date.now()), "x-attempt": "1" },
+            body: JSON.stringify(body),
+        });
+        if(!res.ok) throw failure(`${method}: HTTP ${res.status}`, res.status);
+        return res.json();
+    }
+    // a Periscope login for the account, by user: X's JWT for it (AuthenticatePeriscope) for proxsee's cookie; what
+    // asks with it again with a new one when proxsee no longer takes the one kept
+    const AUTHENTICATE_PERISCOPE = "r7VUmxbfqNkx7uwjgONSNw";
+    const periscope = new Map();
+    async function signedIn(user, ask) {
+        for(let fresh = false; ; fresh = true) {
+            if(fresh || !periscope.has(user)) periscope.set(user, login(user));
+            let cookie;
+            try {
+                cookie = await periscope.get(user);
+            } catch(e) {
+                periscope.delete(user);
+                throw e;
+            }
+            try {
+                return await ask(cookie);
+            } catch(e) {
+                if(fresh || ![401, 403].includes(e.status)) throw e;
+            }
+        }
+    }
+    async function login(user) {
+        const data = await getJSON(`/i/api/graphql/${AUTHENTICATE_PERISCOPE}/AuthenticatePeriscope`, new URLSearchParams({ variables: "{}", features: "{}" }), user);
+        const jwt = data?.data?.authenticate_periscope;
+        if(!jwt) throw failure("no Periscope token");
+        const answer = await proxsee("loginTwitterToken", { jwt, vendor_id: "m5-proxsee-login-a2011357b73e", create_user: true });
+        if(!answer?.cookie) throw failure("no Periscope login");
+        return String(answer.cookie);
     }
     function connect(url, accessToken, room, token) {
         const socket = chat.socket = new WebSocket(url);
@@ -765,7 +822,7 @@
             if(chat.socket !== socket) return;
             socket.send(JSON.stringify({ payload: JSON.stringify({ access_token: accessToken }), kind: 3 }));
             socket.send(JSON.stringify({ payload: JSON.stringify({ body: JSON.stringify({ room }), kind: 1 }), kind: 2 }));
-            chat.status = "open";
+            chat.status = `open, ${chat.via}`;
             chat.retries = 0;
             report();
         });
