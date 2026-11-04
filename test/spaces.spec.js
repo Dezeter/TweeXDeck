@@ -19,7 +19,8 @@ const MAIN = 'e.exports={queryId:"Space_1",operationName:"AudioSpaceById",operat
 // people: Alice's id bigger than a JavaScript number keeps, as most are now
 const ALICE = "1600000000000000001";
 // a Space's audio as HLS: 40 s of a tone in MP3, in segments of 2 s, one after another without a break (Firefox
-// doesn't take MP3 again after a discontinuity)
+// doesn't take MP3 again after a discontinuity), without LAME's bit reservoir: every frame decodes on its own, as
+// Firefox needs where playing starts in the middle, at a live stream's edge (X's AAC has no such reservoir)
 const FIXTURES = path.join(__dirname, "fixtures", "space");
 const SEGMENTS = [...fs.readFileSync(path.join(FIXTURES, "playlist.m3u8"), "utf8").matchAll(/#EXTINF:([\d.]+),\n(s\d+\.ts)/g)].map(m => [m[2], m[1]]);
 const playlist = (count, end) => `${["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-TARGETDURATION:2", "#EXT-X-MEDIA-SEQUENCE:0",
