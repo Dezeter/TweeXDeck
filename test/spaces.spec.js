@@ -81,6 +81,7 @@ async function open(page, { user = "1", main = MAIN, answer = {}, clock = "fixed
     if(clock === "fixed") await page.clock.setFixedTime(NOW);
     else await page.clock.install({ time: NOW });
     const asked = [];
+    const lives = {};
     const answers = { fleetline: () => [200, FLEETLINE], search: () => [200, SEARCH], space: id => [200, SPACES[id] ?? { data: {} }],
         stream: key => [200, { source: { location: `https://stream.test/${key}/playlist.m3u8?type=live`, status: "LIVE_PUBLIC", streamType: "HLS" }, chatToken: "chat-1" }],
         chat: () => [200, { access_token: "access-1", endpoint: "https://chat.test", room_id: "room-1", replay_endpoint: "https://chat.test" }],
@@ -90,8 +91,9 @@ async function open(page, { user = "1", main = MAIN, answer = {}, clock = "fixed
         signedChat: () => [200, { access_token: "access-2", endpoint: "https://chat.test", room_id: "room-1" }],
         // the captions asked for, as x.com does
         enable: () => [200, {}],
-        // the Space's audio: a live one's playlist, a segment more every 2 s, as X's is until the Space ends
-        playlist: live(), ...answer };
+        // the Space's audio: a live one's playlist, a segment more every 2 s, as X's is until the Space ends; each
+        // Space a stream of its own, from its own first request on
+        playlist: key => (lives[key] ||= live())(), ...answer };
     const reply = (route, [status, body]) => route.fulfill({ status, contentType: "application/json", headers: CORS, body: typeof body === "string" ? body : JSON.stringify(body) });
     // the chat's WebSocket, before the page opens as Playwright has it: what the page sent it, and a way to send
     // the page what X's chat would
@@ -126,10 +128,10 @@ async function open(page, { user = "1", main = MAIN, answer = {}, clock = "fixed
             return route.fulfill({ contentType: "text/javascript", body: fs.readFileSync(path.join(ROOT, file)) });
         },
         "https://stream.test/": route => {
-            const name = new URL(route.request().url()).pathname.split("/").pop();
+            const [, key, name] = new URL(route.request().url()).pathname.split("/");
             asked.push({ path: `/stream/${name}` });
             const headers = { "access-control-allow-origin": "*" };
-            if(name.endsWith(".m3u8")) return route.fulfill({ contentType: "application/vnd.apple.mpegurl", headers, body: answers.playlist() });
+            if(name.endsWith(".m3u8")) return route.fulfill({ contentType: "application/vnd.apple.mpegurl", headers, body: answers.playlist(key) });
             return route.fulfill({ contentType: "audio/mp4", headers, body: fs.readFileSync(path.join(FIXTURES, name)) });
         },
         // the Space's chat: its address and token for the stream's chat token
