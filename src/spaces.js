@@ -817,8 +817,11 @@
     resetHydra();
     function heardHydra(kind, value, pts) {
         if(!Array.isArray(value) || !Number.isFinite(pts)) return;
-        hydra.queue.push({ kind, value, pts });
-        if(hydra.queue.length > 400) hydra.queue.splice(0, hydra.queue.length - 400);
+        // in the order of their times in the stream, whatever order they came in: one far ahead holds up none after it
+        const queue = hydra.queue;
+        queue.push({ kind, value, pts });
+        if(queue.length > 1 && queue[queue.length - 2].pts > pts) queue.sort((a, b) => a.pts - b.pts);
+        if(queue.length > 400) queue.splice(0, queue.length - 400);
         if(!hydra.timer) hydra.timer = setInterval(hydraTick, 150);
     }
     // what the audio has got to; what's far behind it dropped, what's far ahead of it, on another clock, taken as

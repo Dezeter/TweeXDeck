@@ -725,12 +725,13 @@ test("who's on stage and who speaks by the stream itself: HydraParticipants and 
     await page.evaluate(stage => window.__metadata([["HydraParticipants", stage], ["HydraAudioLevel", [0.02, 0.9, 0]]], 0.1, 2), STAGE);
     await expect.poll(() => stageShown(page)).toEqual(["Hana @hana", "Alice @alice *", "@newbie"]);
     expect((await playerShown(page)).state).toBe("Говорит Alice");
-    // not before the audio gets there
-    await page.evaluate(() => window.__metadata([["HydraAudioLevel", [0.8, 0, 0.7]]], 4, 3));
-    await page.waitForTimeout(1500);
+    // not before the audio gets there: Hana a long way ahead, held up neither by nor before what comes after
+    await page.evaluate(() => window.__metadata([["HydraAudioLevel", [0.8, 0, 0]]], 20, 1));
+    await page.waitForTimeout(1200);
     expect((await playerShown(page)).state).not.toBe("Говорит Hana");
     // two at once: both marked, the loudest named
-    await expect.poll(() => stageShown(page), { timeout: 8000 }).toEqual(["Hana @hana *", "Alice @alice", "@newbie *"]);
+    await page.evaluate(() => window.__metadata([["HydraAudioLevel", [0.8, 0, 0.7]]], 0.05, 2));
+    await explained(page, expect.poll(() => stageShown(page), { timeout: 5000 }).toEqual(["Hana @hana *", "Alice @alice", "@newbie *"]));
     expect((await playerShown(page)).state).toBe("Говорит Hana");
     // quiet once their levels are past: no one a moment later
     await expect.poll(() => playerShown(page).then(p => p.state), { timeout: 8000 }).toBe("В эфире · Hana");
