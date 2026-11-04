@@ -141,12 +141,23 @@ async function open(page, { user = "1", main = MAIN, answer = {}, clock = "fixed
         window.solveChallenge = async (path, method) => `tid:${method}:${path}`;
         window.__told = [];
         document.documentElement.dataset.otdBase = "http://otd.test/ext/";
-        // the audio elements played
+        // the audio elements played, and what they went through
+        window.__events = [];
         const play = HTMLMediaElement.prototype.play;
         HTMLMediaElement.prototype.play = function() {
             window.__audio = this;
-            return play.call(this);
+            if(!this.__watched) {
+                this.__watched = true;
+                for(const name of ["loadedmetadata", "canplay", "playing", "waiting", "stalled", "pause", "seeking", "seeked", "ended", "error", "emptied"]) {
+                    this.addEventListener(name, () => window.__events.push(`${name}@${this.currentTime.toFixed(2)}`));
+                }
+            }
+            return play.call(this).catch(e => {
+                window.__events.push(`play rejected: ${e.name}`);
+                throw e;
+            });
         };
+        window.addEventListener("error", e => window.__events.push(`error: ${e.message}`));
         document.addEventListener("otd-diagnostic", e => {
             const entry = JSON.parse(e.detail);
             if(entry.kind === "spaces" || entry.kind === "spaces-player") window.__told.push(entry);
@@ -361,6 +372,24 @@ const playerShown = page => page.evaluate(() => {
         open: box.querySelector(".otd-space-player-open").href,
     };
 });
+// the audio played, at least `seconds` in; if not, what the player and the browser said of it, to tell why
+async function plays(page, seconds) {
+    try {
+        await expect.poll(async () => (await audio(page))?.time ?? 0, { timeout: 15000 }).toBeGreaterThan(seconds);
+    } catch(e) {
+        const said = await page.evaluate(() => {
+            const a = window.__audio, ranges = r => r ? [...Array(r.length).keys()].map(i => `${r.start(i).toFixed(2)}-${r.end(i).toFixed(2)}`).join(" ") : "";
+            return {
+                state: document.querySelector(".otd-space-player-state")?.textContent,
+                told: window.__told.filter(t => t.kind === "spaces-player").map(t => `${t.state}${t.error ? ` (${t.error})` : ""}`).join(", "),
+                audio: a && { time: a.currentTime, paused: a.paused, readyState: a.readyState, networkState: a.networkState, error: a.error && `${a.error.code} ${a.error.message}`, buffered: ranges(a.buffered), seekable: ranges(a.seekable), duration: a.duration },
+                hls: typeof Hls === "function" ? Hls.version : null,
+                events: window.__events?.slice(-30),
+            };
+        });
+        throw new Error(`${e.message}\nthe player: ${JSON.stringify(said, null, 1)}`);
+    }
+}
 const listenButton = (page, id) => page.locator(`[data-column="s1"] .otd-space[data-space-id="${id}"] .otd-space-listen`);
 const audio = page => page.evaluate(() => window.__audio && { time: window.__audio.currentTime, paused: window.__audio.paused, volume: window.__audio.volume, src: !!window.__audio.getAttribute("src") || !!window.__audio.srcObject || window.__audio.currentSrc !== "" });
 
@@ -370,7 +399,7 @@ test("Listen plays a live Space right in TweetDeck: its stream from live_video_s
     // the scheduled ones still open on x.com
     expect(await page.locator('[data-column="s1"] .is-coming a.otd-space-listen').count()).toBe(2);
     await listenButton(page, "1LiveAAAAAAAA").click();
-    await expect.poll(async () => (await audio(page))?.time ?? 0, { timeout: 15000 }).toBeGreaterThan(0.5);
+    await plays(page, 0.5);
     expect(await playerShown(page)).toEqual({ column: "s1", title: "Утренний <b>эфир</b>", state: "В эфире · Hana", toggle: "Пауза", open: "https://x.com/i/spaces/1LiveAAAAAAAA" });
     expect(await page.locator(".otd-space-player b").count()).toBe(0);
     // asked for its stream by its media key, as x.com asks; hls.js loaded from the extension once, the stream's playlist and segments
@@ -394,7 +423,7 @@ test("Listen plays a live Space right in TweetDeck: its stream from live_video_s
     // another one: the first one let go of
     await listenButton(page, "1LiveBBBBBBBB").click();
     await expect.poll(async () => (await playerShown(page))?.title).toBe("Спейс · Carl");
-    await expect.poll(async () => (await audio(page))?.time ?? 0, { timeout: 15000 }).toBeGreaterThan(0.5);
+    await plays(page, 0.5);
     expect((await audio(page)).volume).toBe(0.3);
     await expect(listenButton(page, "1LiveAAAAAAAA")).toHaveText("Слушать");
     expect(await page.locator(".otd-space-player").count()).toBe(1);
@@ -425,7 +454,7 @@ test("X not giving a Space's stream: the player says it couldn't connect, and tr
     expect((await playerShown(page)).toggle).toBe("Ещё раз");
     refused = false;
     await page.click(".otd-space-player-toggle");
-    await expect.poll(async () => (await audio(page))?.time ?? 0, { timeout: 15000 }).toBeGreaterThan(0.5);
+    await plays(page, 0.5);
     expect((await playerShown(page)).state).toBe("В эфире · Hana");
 });
 
@@ -437,7 +466,7 @@ test("hls.js goes on the page as a global even where the page has an AMD loader"
         window.define.amd = {};
     });
     await listenButton(page, "1LiveAAAAAAAA").click();
-    await expect.poll(async () => (await audio(page))?.time ?? 0, { timeout: 15000 }).toBeGreaterThan(0.5);
+    await plays(page, 0.5);
     expect(await page.evaluate(() => [typeof window.Hls, !!window.__defined, typeof window.define])).toEqual(["function", false, "function"]);
 });
 
@@ -455,7 +484,7 @@ test("the player shows who's on stage, and from the Space's chat who speaks and 
     const asked = await open(page);
     await expect.poll(() => cards(page)).toBe(4);
     await listenButton(page, "1LiveAAAAAAAA").click();
-    await expect.poll(async () => (await audio(page))?.time ?? 0, { timeout: 15000 }).toBeGreaterThan(0.2);
+    await plays(page, 0.2);
     // the host, the co-hosts and the speakers, as AudioSpaceById has them
     expect(await stageShown(page)).toEqual(["Hana @hana", "Alice @alice", "Gus @gus"]);
 
@@ -524,7 +553,7 @@ test("the chat not to be had: the Space plays all the same", async ({ page }) =>
     const asked = await open(page, { answer: { chat: () => [403, ""] } });
     await expect.poll(() => cards(page)).toBe(4);
     await listenButton(page, "1LiveAAAAAAAA").click();
-    await expect.poll(async () => (await audio(page))?.time ?? 0, { timeout: 15000 }).toBeGreaterThan(0.5);
+    await plays(page, 0.5);
     expect((await playerShown(page)).state).toBe("В эфире · Hana");
     expect(asked.chat.socket).toBeNull();
     expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1))).toMatchObject({ state: "playing", chat: "HTTP 403", captions: 0 });
