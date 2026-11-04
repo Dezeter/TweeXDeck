@@ -18,12 +18,11 @@ const MAIN = 'e.exports={queryId:"Space_1",operationName:"AudioSpaceById",operat
 
 // people: Alice's id bigger than a JavaScript number keeps, as most are now
 const ALICE = "1600000000000000001";
-// a Space's audio as HLS: 40 s of a tone in MP3, in segments of 2 s, one after another without a break (Firefox
-// doesn't take MP3 again after a discontinuity), without LAME's bit reservoir: every frame decodes on its own, as
-// Firefox needs where playing starts in the middle, at a live stream's edge (X's AAC has no such reservoir)
+// a Space's audio as HLS: 40 s of a tone in Opus, in fragmented MP4 of 2 s each, which Chromium and Firefox both
+// play as they are (MP3 in MPEG-TS, which hls.js makes over for Firefox, Firefox failed to decode a second in)
 const FIXTURES = path.join(__dirname, "fixtures", "space");
-const SEGMENTS = [...fs.readFileSync(path.join(FIXTURES, "playlist.m3u8"), "utf8").matchAll(/#EXTINF:([\d.]+),\n(s\d+\.ts)/g)].map(m => [m[2], m[1]]);
-const playlist = (count, end) => `${["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-TARGETDURATION:2", "#EXT-X-MEDIA-SEQUENCE:0",
+const SEGMENTS = [...fs.readFileSync(path.join(FIXTURES, "playlist.m3u8"), "utf8").matchAll(/#EXTINF:([\d.]+),\n(s\d+\.m4s)/g)].map(m => [m[2], m[1]]);
+const playlist = (count, end) => `${["#EXTM3U", "#EXT-X-VERSION:7", "#EXT-X-TARGETDURATION:2", "#EXT-X-MEDIA-SEQUENCE:0", '#EXT-X-MAP:URI="init.mp4"',
     ...SEGMENTS.slice(0, count).flatMap(([file, duration]) => [`#EXTINF:${duration},`, file]), ...end ? ["#EXT-X-ENDLIST"] : []].join("\n")}\n`;
 // a live Space's playlist: a segment more every 2 s from its first request, as X's is until the Space ends
 function live() {
@@ -125,7 +124,7 @@ async function open(page, { user = "1", main = MAIN, answer = {}, clock = "fixed
             asked.push({ path: `/stream/${name}` });
             const headers = { "access-control-allow-origin": "*" };
             if(name.endsWith(".m3u8")) return route.fulfill({ contentType: "application/vnd.apple.mpegurl", headers, body: answers.playlist() });
-            return route.fulfill({ contentType: "video/mp2t", headers, body: fs.readFileSync(path.join(FIXTURES, name)) });
+            return route.fulfill({ contentType: "audio/mp4", headers, body: fs.readFileSync(path.join(FIXTURES, name)) });
         },
         // the Space's chat: its address and token for the stream's chat token
         "https://proxsee.pscp.tv/": route => {
@@ -406,7 +405,7 @@ test("Listen plays a live Space right in TweetDeck: its stream from live_video_s
     // asked for its stream by its media key, as x.com asks; hls.js loaded from the extension once, the stream's playlist and segments
     expect(asked.filter(a => a.path.startsWith("/i/api/1.1/live_video_stream/"))).toEqual([{ path: "/i/api/1.1/live_video_stream/status/28_1LiveAAAAAAAA", query: "?client=web&use_syndication_guest_id=false&cookie_set_host=otd.test", actAs: null }]);
     expect(asked.filter(a => a.path.startsWith("/ext/")).map(a => a.path)).toEqual(["/ext/files/hls/hls.light.min.js"]);
-    expect(asked.some(a => a.path === "/stream/s0.ts")).toBe(true);
+    expect(asked.some(a => a.path === "/stream/init.mp4") && asked.some(a => a.path === "/stream/s0.m4s")).toBe(true);
     // its card's button pauses it
     await expect(listenButton(page, "1LiveAAAAAAAA")).toHaveText("Пауза");
     await listenButton(page, "1LiveAAAAAAAA").click();
