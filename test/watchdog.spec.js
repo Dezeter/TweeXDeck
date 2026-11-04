@@ -409,6 +409,9 @@ test("the Spaces column's last check: how X answered its fleetline, its search a
     // the media errors hls.js got it going again after
     await diagnostic(page, { kind: "spaces-player", state: "playing", error: "", recovered: ["bufferAppendError: aborted"], chat: "open", captions: 1, messages: [] });
     expect(await askReport(page)).toMatch(/; player playing at \d+ s, going again after bufferAppendError: aborted, chat open, 1 captions\n/);
+    // how asking for the captions went
+    await diagnostic(page, { kind: "spaces-player", state: "playing", error: "", chat: "open, signed in", captionsAsked: "enableSpacesCaption: HTTP 400", captions: 0, messages: [] });
+    expect(await askReport(page)).toMatch(/; player playing at \d+ s, chat open, signed in, captions asked: enableSpacesCaption: HTTP 400, 0 captions\n/);
 });
 
 test("the panel in the language picked in TweeXDeck's settings, not the browser's", async ({ page }) => {

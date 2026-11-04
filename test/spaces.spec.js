@@ -88,6 +88,8 @@ async function open(page, { user = "1", main = MAIN, answer = {}, clock = "fixed
         periscope: () => [200, { data: { authenticate_periscope: "jwt-1" } }],
         login: () => [200, { cookie: "cookie-1", user: { id: "p1" } }],
         signedChat: () => [200, { access_token: "access-2", endpoint: "https://chat.test", room_id: "room-1" }],
+        // the captions asked for, as x.com does
+        enable: () => [200, {}],
         // the Space's audio: a live one's playlist, a segment more every 2 s, as X's is until the Space ends
         playlist: live(), ...answer };
     const reply = (route, [status, body]) => route.fulfill({ status, contentType: "application/json", headers: CORS, body: typeof body === "string" ? body : JSON.stringify(body) });
@@ -135,7 +137,7 @@ async function open(page, { user = "1", main = MAIN, answer = {}, clock = "fixed
             const request = route.request();
             const method = new URL(request.url()).pathname.split("/").pop();
             asked.push({ path: `/pscp${new URL(request.url()).pathname}`, body: request.postDataJSON(), agent: request.headers()["x-periscope-user-agent"] || null });
-            return reply(route, { accessChatPublic: answers.chat, loginTwitterToken: answers.login, accessChat: answers.signedChat }[method]?.() ?? [404, ""]);
+            return reply(route, { accessChatPublic: answers.chat, loginTwitterToken: answers.login, accessChat: answers.signedChat, enableSpacesCaption: answers.enable }[method]?.() ?? [404, ""]);
         },
         "https://abs.twimg.com/": route => {
             asked.push({ path: new URL(route.request().url()).pathname });
@@ -496,7 +498,10 @@ test("the player shows who's on stage, and from the Space's chat who speaks and 
 
     // the chat asked for as x.com's listeners do: its address for the stream's chat token, then told its token and room
     await expect.poll(() => asked.chat.sent.length).toBe(2);
-    expect(asked.filter(a => a.path.startsWith("/pscp/"))).toEqual([{ path: "/pscp/api/v2/accessChatPublic", body: { chat_token: "chat-1" }, agent: "Twitter/m5" }]);
+    expect(asked.find(a => a.path.startsWith("/pscp/"))).toEqual({ path: "/pscp/api/v2/accessChatPublic", body: { chat_token: "chat-1" }, agent: "Twitter/m5" });
+    // the captions asked for, as x.com does: the Space's id and a Periscope login, the chat's address as a guest's
+    await expect.poll(() => asked.filter(a => a.path.startsWith("/pscp/")).map(a => a.path)).toEqual(["/pscp/api/v2/accessChatPublic", "/pscp/api/v2/loginTwitterToken", "/pscp/api/v2/enableSpacesCaption"]);
+    expect(asked.find(a => a.path === "/pscp/api/v2/enableSpacesCaption")).toMatchObject({ body: { broadcast_id: "1LiveAAAAAAAA", cookie: "cookie-1" }, agent: "Twitter/m5" });
     expect(asked.chat.sent.map(m => [m.kind, JSON.parse(m.payload)])).toEqual([
         [3, { access_token: "access-1" }],
         [2, { body: JSON.stringify({ room: "room-1" }), kind: 1 }],
@@ -548,7 +553,7 @@ test("the player shows who's on stage, and from the Space's chat who speaks and 
     // for the load watchdog: the chat open, its captions, its kinds of messages by their fields' names only
     asked.chat.socket.send(chatMessage(2, { occupancy: 40, total_participants: 50 }));
     await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).messages)).toEqual(["1:45:body,final,timestamp,type,username", "2:-:occupancy,total_participants"]);
-    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1))).toMatchObject({ state: "playing", chat: "open, as a guest", captions: 4 });
+    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1))).toMatchObject({ state: "playing", chat: "open, as a guest", captionsAsked: "ok", captions: 4 });
 
     // closed: the chat too
     await page.click(".otd-space-player-close");
@@ -574,8 +579,11 @@ test("a Space whose chat a guest gets no address of: the chat as x.com's signed 
     await expect.poll(() => cards(page)).toBe(4);
     await listenButton(page, "1LiveAAAAAAAA").click();
     await expect.poll(() => asked.chat.sent.length).toBe(2);
+    await expect.poll(() => asked.filter(a => a.path === "/pscp/api/v2/enableSpacesCaption").length).toBe(1);
     const steps = asked.filter(a => a.path.startsWith("/pscp/") || a.path.endsWith("/AuthenticatePeriscope"));
-    expect(steps.map(a => a.path)).toEqual(["/pscp/api/v2/accessChatPublic", "/i/api/graphql/r7VUmxbfqNkx7uwjgONSNw/AuthenticatePeriscope", "/pscp/api/v2/loginTwitterToken", "/pscp/api/v2/accessChat"]);
+    expect(steps.map(a => a.path)).toEqual(["/pscp/api/v2/accessChatPublic", "/i/api/graphql/r7VUmxbfqNkx7uwjgONSNw/AuthenticatePeriscope", "/pscp/api/v2/loginTwitterToken", "/pscp/api/v2/accessChat", "/pscp/api/v2/enableSpacesCaption"]);
+    // the captions asked for with the same login, the one login asked for once
+    expect(steps[4].body).toEqual({ broadcast_id: "1LiveAAAAAAAA", cookie: "cookie-1" });
     // X's JWT as the column's account, for Periscope's login; the chat with its cookie
     expect(steps[1]).toMatchObject({ variables: {}, features: {}, actAs: "7" });
     expect(steps[2].body).toEqual({ jwt: "jwt-1", vendor_id: "m5-proxsee-login-a2011357b73e", create_user: true });
@@ -586,11 +594,12 @@ test("a Space whose chat a guest gets no address of: the chat as x.com's signed 
     asked.chat.socket.send(caption("alice", "Привет"));
     await expect.poll(() => playerShown(page).then(p => p.state)).toBe("Говорит Alice");
 
-    // another Space: the login kept, no new one
+    // another Space: the login kept, no new one; its captions asked for too
     const before = asked.filter(a => a.path === "/pscp/api/v2/loginTwitterToken").length;
     await listenButton(page, "1LiveBBBBBBBB").click();
-    await expect.poll(() => asked.filter(a => a.path === "/pscp/api/v2/accessChat").length).toBe(2);
+    await expect.poll(() => asked.filter(a => a.path === "/pscp/api/v2/enableSpacesCaption").map(a => a.body.broadcast_id)).toEqual(["1LiveAAAAAAAA", "1LiveBBBBBBBB"]);
     expect(asked.filter(a => a.path === "/pscp/api/v2/loginTwitterToken").length).toBe(before);
+    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1))).toMatchObject({ chat: "open, signed in", captionsAsked: "ok" });
 });
 
 test("the player's buttons and the cards' keep their look in the dark theme with the pointer over them and pressed", async ({ page }) => {
@@ -618,4 +627,14 @@ test("the player's buttons and the cards' keep their look in the dark theme with
         expect(border, selector).toBe("0px");
         if(!selector.includes("-cc")) expect(shadow, selector).toBe("none");
     }
+});
+
+test("captions X won't turn on: the Space plays and its chat stays open, the diagnostics say so", async ({ page }) => {
+    const asked = await open(page, { answer: { enable: () => [400, ""] } });
+    await expect.poll(() => cards(page)).toBe(4);
+    await listenButton(page, "1LiveAAAAAAAA").click();
+    await plays(page, 0.5);
+    await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).captionsAsked)).toBe("enableSpacesCaption: HTTP 400");
+    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).chat)).toBe("open, as a guest");
+    expect(asked.chat.socket).not.toBeNull();
 });

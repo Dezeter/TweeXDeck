@@ -715,7 +715,7 @@
     function report() {
         document.dispatchEvent(new CustomEvent("otd-diagnostic", { detail: JSON.stringify({
             kind: "spaces-player", state: player.state || "stopped", error: player.error, recovered: player.recovered.slice(-3),
-            chat: chat.status, captions: chat.captions, messages: [...chat.shapes.keys()],
+            chat: chat.status, captionsAsked: chat.asked, captions: chat.captions, messages: [...chat.shapes.keys()],
         }) }));
     }
 
@@ -724,7 +724,8 @@
     // WebSocket there (chatapi/v1/chatnow) told that token and the room. The address comes from proxsee.pscp.tv's
     // accessChatPublic, as a guest's does; where that one has none, as a signed in listener's: X's
     // AuthenticatePeriscope for a Periscope login (loginTwitterToken), kept for the page's while, then accessChat with
-    // it. While the Space has captions on, they come in the chat with who says them: { body, username, final }.
+    // it. While the Space has captions on, they come in the chat with who says them: { body, username, final }, once
+    // the listener asks for them, as x.com does: enableSpacesCaption with the Space's id and the Periscope login.
     const CAPTIONS_STORAGE = "OTDspacesCaptions";
     // "1" while the captions are across the whole column, with what was said before
     const WIDE_STORAGE = "OTDspacesCaptionsWide";
@@ -733,7 +734,8 @@
     const SPEAKING_FOR = 3000, CAPTION_FOR = 8000;
     // lines: what was said, by whom, the last one as it's said
     // via: how its address came, as a guest or signed in
-    const chat = { socket: null, token: null, status: "", via: "", captions: 0, shapes: new Map(), speaker: null, caption: null, lines: [], timer: 0, retries: 0 };
+    // asked: how asking for its captions went
+    const chat = { socket: null, token: null, status: "", via: "", asked: "", askedFor: null, captions: 0, shapes: new Map(), speaker: null, caption: null, lines: [], timer: 0, retries: 0 };
     const captionsOn = () => localStorage[CAPTIONS_STORAGE] !== "0";
     const json = text => {
         if(typeof text !== "string") return text && typeof text === "object" ? text : null;
@@ -745,7 +747,7 @@
     };
     async function openChat(chatToken, token) {
         closeChat();
-        Object.assign(chat, { token, status: chatToken ? "connecting" : "no chat token", captions: 0, shapes: new Map(), speaker: null, caption: null, lines: [], retries: 0 });
+        Object.assign(chat, { token, status: chatToken ? "connecting" : "no chat token", asked: "", captions: 0, shapes: new Map(), speaker: null, caption: null, lines: [], retries: 0 });
         report();
         if(!chatToken) return;
         const user = player.user;
@@ -767,6 +769,21 @@
             chat.status = String(e?.message || e).slice(0, 80);
             report();
         }
+    }
+    // the captions asked for, once for each Space played; how it went for the diagnostics
+    async function askCaptions(token) {
+        const space = player.space, user = player.user;
+        if(!space || chat.askedFor === token) return;
+        chat.askedFor = token;
+        let asked = "ok";
+        try {
+            await signedIn(user, cookie => proxsee("enableSpacesCaption", { broadcast_id: space.id, cookie }));
+        } catch(e) {
+            asked = String(e?.message || e).slice(0, 80);
+        }
+        if(chat.token !== token) return;
+        chat.asked = asked;
+        report();
     }
     // the chat's WebSocket address in an answer that has its token, or null
     function chatAddress(access) {
@@ -825,6 +842,7 @@
             chat.status = `open, ${chat.via}`;
             chat.retries = 0;
             report();
+            askCaptions(token);
         });
         socket.addEventListener("message", e => {
             if(chat.socket === socket) heardChat(e.data);
