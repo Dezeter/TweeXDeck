@@ -18,22 +18,18 @@ const MAIN = 'e.exports={queryId:"Space_1",operationName:"AudioSpaceById",operat
 
 // people: Alice's id bigger than a JavaScript number keeps, as most are now
 const ALICE = "1600000000000000001";
-// a Space's audio as HLS: 6 s of a tone in MP3, in three segments and a short one
+// a Space's audio as HLS: 40 s of a tone in MP3, in segments of 2 s, one after another without a break (Firefox
+// doesn't take MP3 again after a discontinuity)
 const FIXTURES = path.join(__dirname, "fixtures", "space");
-// a live Space's playlist: its three segments over and over, one more every 2 s from its first request
-const SEGMENTS = [["s0.ts", 2.011422], ["s1.ts", 2.011433], ["s2.ts", 1.9853]];
+const SEGMENTS = [...fs.readFileSync(path.join(FIXTURES, "playlist.m3u8"), "utf8").matchAll(/#EXTINF:([\d.]+),\n(s\d+\.ts)/g)].map(m => [m[2], m[1]]);
+const playlist = (count, end) => `${["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-TARGETDURATION:2", "#EXT-X-MEDIA-SEQUENCE:0",
+    ...SEGMENTS.slice(0, count).flatMap(([file, duration]) => [`#EXTINF:${duration},`, file]), ...end ? ["#EXT-X-ENDLIST"] : []].join("\n")}\n`;
+// a live Space's playlist: a segment more every 2 s from its first request, as X's is until the Space ends
 function live() {
     let start = 0;
     return () => {
         start ||= Date.now();
-        const count = 3 + Math.floor((Date.now() - start) / 2000);
-        const lines = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-TARGETDURATION:2", "#EXT-X-MEDIA-SEQUENCE:0"];
-        for(let i = 0; i < count; i++) {
-            const [file, duration] = SEGMENTS[i % 3];
-            if(i && i % 3 === 0) lines.push("#EXT-X-DISCONTINUITY");
-            lines.push(`#EXTINF:${duration},`, file);
-        }
-        return `${lines.join("\n")}\n`;
+        return playlist(Math.min(SEGMENTS.length, 3 + Math.floor((Date.now() - start) / 2000)), false);
     };
 }
 const person = (id, name) => ({ periscope_user_id: `p${id}`, display_name: name, twitter_screen_name: name.toLowerCase(), avatar_url: `https://pbs.twimg.com/profile_images/${id}/a_normal.jpg`, user_results: { rest_id: id, result: { __typename: "User" } } });
@@ -412,8 +408,8 @@ test("Listen plays a live Space right in TweetDeck: its stream from live_video_s
 });
 
 test("a Space whose stream ends: the player says it has ended", async ({ page }) => {
-    // the whole of it, its end too
-    await open(page, { answer: { playlist: () => fs.readFileSync(path.join(FIXTURES, "playlist.m3u8"), "utf8") } });
+    // 6 s of it, and its end
+    await open(page, { answer: { playlist: () => playlist(3, true) } });
     await expect.poll(() => cards(page)).toBe(4);
     await listenButton(page, "1LiveAAAAAAAA").click();
     await expect.poll(async () => (await playerShown(page))?.state, { timeout: 20000 }).toBe("Спейс закончился");
