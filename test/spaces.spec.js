@@ -373,15 +373,16 @@ const playerShown = page => page.evaluate(() => {
     };
 });
 // the audio played, at least `seconds` in; if not, what the player and the browser said of it, to tell why
-async function plays(page, seconds) {
+const plays = (page, seconds) => explained(page, expect.poll(async () => (await audio(page))?.time ?? 0, { timeout: 15000 }).toBeGreaterThan(seconds));
+async function explained(page, check) {
     try {
-        await expect.poll(async () => (await audio(page))?.time ?? 0, { timeout: 15000 }).toBeGreaterThan(seconds);
+        await check;
     } catch(e) {
         const said = await page.evaluate(() => {
             const a = window.__audio, ranges = r => r ? [...Array(r.length).keys()].map(i => `${r.start(i).toFixed(2)}-${r.end(i).toFixed(2)}`).join(" ") : "";
             return {
                 state: document.querySelector(".otd-space-player-state")?.textContent,
-                told: window.__told.filter(t => t.kind === "spaces-player").map(t => `${t.state}${t.error ? ` (${t.error})` : ""}`).join(", "),
+                told: window.__told.filter(t => t.kind === "spaces-player").map(t => `${t.state}${t.error ? ` (${t.error})` : ""}${t.recovered?.length ? ` [going again after ${t.recovered.join("; ")}]` : ""}`).join(", "),
                 audio: a && { time: a.currentTime, paused: a.paused, readyState: a.readyState, networkState: a.networkState, error: a.error && `${a.error.code} ${a.error.message}`, buffered: ranges(a.buffered), seekable: ranges(a.seekable), duration: a.duration },
                 hls: typeof Hls === "function" ? Hls.version : null,
                 events: window.__events?.slice(-30),
@@ -527,7 +528,7 @@ test("the player shows who's on stage, and from the Space's chat who speaks and 
     expect(await page.evaluate(() => localStorage.OTDspacesCaptionsWide)).toBeUndefined();
 
     // a while after the last caption no one speaks, the caption goes later
-    await expect.poll(() => playerShown(page).then(p => p.state), { timeout: 6000 }).toBe("В эфире · Hana");
+    await explained(page, expect.poll(() => playerShown(page).then(p => p.state), { timeout: 6000 }).toBe("В эфире · Hana"));
     expect(await captionShown(page)).toBe("newcomer: Можно вопрос?");
     await expect.poll(() => captionShown(page), { timeout: 10000 }).toBeNull();
 

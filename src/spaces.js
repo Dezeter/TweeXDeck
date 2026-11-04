@@ -533,7 +533,8 @@
     // --- listening --------------------------------------------------------------------------------------------
     // the Space playing, the column it was started from and its account, and how it goes: connecting, playing,
     // paused, ended, failed
-    const player = { space: null, column: "", user: "", state: "", error: "", chatToken: "", audio: null, hls: null, token: null, pausedAt: 0 };
+    // recovered: the media errors hls.js got the media going again after
+    const player = { space: null, column: "", user: "", state: "", error: "", chatToken: "", audio: null, hls: null, token: null, pausedAt: 0, recovered: [], recoveredAt: -Infinity };
     const VOLUME_STORAGE = "OTDspacesVolume";
     const volume = () => {
         const value = Number(localStorage[VOLUME_STORAGE]);
@@ -602,7 +603,7 @@
         const audio = audioElement();
         audio.volume = volume();
         const token = {};
-        Object.assign(player, { space, column: column.key, user: column.user, state: "connecting", error: "", chatToken: "", token });
+        Object.assign(player, { space, column: column.key, user: column.user, state: "connecting", error: "", chatToken: "", token, recovered: [], recoveredAt: -Infinity });
         changed();
         try {
             const stream = await streamOf(space, column.user);
@@ -619,7 +620,18 @@
             if(Hls?.isSupported()) {
                 const hls = player.hls = new Hls({ liveDurationInfinity: true });
                 hls.on(Hls.Events.ERROR, (event, data) => {
-                    if(data?.fatal && player.token === token) fail(data.response?.code ? `HTTP ${data.response.code}` : String(data.details || data.type));
+                    if(!data?.fatal || player.token !== token) return;
+                    const what = `${data.details || data.type}${data.error?.message ? `: ${data.error.message}` : ""}`.slice(0, 100);
+                    // the media choking now and then, as hls.js's own docs have it: it gets the media going again, once
+                    // in a while; again soon after, the player says so
+                    if(data.type === Hls.ErrorTypes.MEDIA_ERROR && performance.now() - player.recoveredAt > 10000) {
+                        player.recoveredAt = performance.now();
+                        player.recovered.push(what);
+                        report();
+                        hls.recoverMediaError();
+                        return;
+                    }
+                    fail(data.response?.code ? `HTTP ${data.response.code}` : what);
                 });
                 hls.loadSource(stream.url);
                 hls.attachMedia(audio);
@@ -702,7 +714,7 @@
     // kinds of messages it had, by their fields' names, without what's in them
     function report() {
         document.dispatchEvent(new CustomEvent("otd-diagnostic", { detail: JSON.stringify({
-            kind: "spaces-player", state: player.state || "stopped", error: player.error,
+            kind: "spaces-player", state: player.state || "stopped", error: player.error, recovered: player.recovered.slice(-3),
             chat: chat.status, captions: chat.captions, messages: [...chat.shapes.keys()],
         }) }));
     }
