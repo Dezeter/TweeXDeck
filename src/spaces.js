@@ -232,6 +232,9 @@
             : (meta.state === "NotStarted" || meta.state === "PrePublished") && scheduled > now - LATE ? "coming"
             : "gone";
         const participants = space.participants || {};
+        // what X tells of one on stage, for the diagnostics: its fields' names only
+        const onStage = participants.speakers?.[0] || participants.admins?.[0];
+        if(onStage) participantShape = shape(onStage);
         const admins = (participants.admins || []).map(person);
         const creator = user(meta.creator_results);
         const host = creator?.rest_id ? {
@@ -253,6 +256,8 @@
             listeners: (participants.listeners || []).map(person),
         };
     }
+
+    let participantShape = "";
 
     // --- what's known, by account -----------------------------------------------------------------------------
     const states = new Map();
@@ -604,6 +609,7 @@
         audio.volume = volume();
         const token = {};
         Object.assign(player, { space, column: column.key, user: column.user, state: "connecting", error: "", chatToken: "", token, recovered: [], recoveredAt: -Infinity });
+        metadata.clear();
         changed();
         try {
             const stream = await streamOf(space, column.user);
@@ -632,6 +638,10 @@
                         return;
                     }
                     fail(data.response?.code ? `HTTP ${data.response.code}` : what);
+                });
+                // the stream's own timed metadata, ID3 in its chunks: what kinds come, for the diagnostics
+                hls.on(Hls.Events.FRAG_PARSING_METADATA, (event, data) => {
+                    if(player.token === token) heardMetadata(data?.samples);
                 });
                 hls.loadSource(stream.url);
                 hls.attachMedia(audio);
@@ -715,8 +725,71 @@
     function report() {
         document.dispatchEvent(new CustomEvent("otd-diagnostic", { detail: JSON.stringify({
             kind: "spaces-player", state: player.state || "stopped", error: player.error, recovered: player.recovered.slice(-3),
-            chat: chat.status, captionsAsked: chat.asked, captions: chat.captions, messages: [...chat.shapes.keys()],
+            chat: chat.status, captionsAsked: chat.asked, captions: chat.captions, messages: [...chat.shapes.keys()], answers: chat.answers,
+            metadata: [...metadata].map(([kind, n]) => `${kind} ×${n}`), participant: participantShape,
         }) }));
+    }
+
+    // --- the stream's metadata ---------------------------------------------------------------------------------
+    // ID3 tags hls.js finds in the stream's chunks, by the kind of each frame in them: its id, the description or
+    // owner it has, and what its value is made of, a JSON one by its fields; counted. Nothing of what's in them.
+    const metadata = new Map();
+    function heardMetadata(samples) {
+        let heard = false;
+        for(const sample of samples || []) {
+            for(const frame of id3Frames(sample?.data)) {
+                const kind = `${frame.id}${frame.label ? `(${frame.label.slice(0, 60)})` : ""}:${frame.value}`.slice(0, 200);
+                if(!metadata.has(kind) && metadata.size >= 12) continue;
+                metadata.set(kind, (metadata.get(kind) || 0) + 1);
+                heard = true;
+            }
+        }
+        // once for a chunk's, a few seconds apart
+        if(heard) report();
+    }
+    // the frames of an ID3v2 tag: id, the description (TXXX, WXXX) or owner (PRIV, GEOB) before its value, the value's
+    // make
+    function id3Frames(bytes) {
+        const frames = [];
+        if(!(bytes instanceof Uint8Array) || bytes.length < 10 || bytes[0] !== 0x49 || bytes[1] !== 0x44 || bytes[2] !== 0x33) return frames;
+        const version = bytes[3];
+        const syncsafe = at => ((bytes[at] & 0x7f) << 21) | ((bytes[at + 1] & 0x7f) << 14) | ((bytes[at + 2] & 0x7f) << 7) | (bytes[at + 3] & 0x7f);
+        const end = Math.min(bytes.length, 10 + syncsafe(6));
+        let at = 10;
+        while(at + 10 <= end && frames.length < 20) {
+            const id = String.fromCharCode(...bytes.subarray(at, at + 4));
+            if(!/^[A-Z0-9]{4}$/.test(id)) break;
+            const size = version >= 4 ? syncsafe(at + 4) : (bytes[at + 4] << 24 | bytes[at + 5] << 16 | bytes[at + 6] << 8 | bytes[at + 7]) >>> 0;
+            const body = bytes.subarray(at + 10, Math.min(end, at + 10 + size));
+            frames.push(id3Frame(id, body));
+            at += 10 + size;
+        }
+        return frames;
+    }
+    function id3Frame(id, body) {
+        const text = (part, encoding) => {
+            try {
+                return new TextDecoder(encoding === 1 ? "utf-16" : encoding === 2 ? "utf-16be" : encoding === 3 ? "utf-8" : "latin1").decode(part).replace(/\0+$/, "");
+            } catch(e) {
+                return "";
+            }
+        };
+        const valueOf = string => {
+            const parsed = json(string);
+            return parsed && typeof parsed === "object" ? shape(parsed) : string ? `text(${string.length})` : "empty";
+        };
+        if(id === "PRIV" || id === "GEOB") {
+            const zero = body.indexOf(0);
+            return { id, label: text(body.subarray(0, zero < 0 ? body.length : zero), 0), value: `bytes(${zero < 0 ? 0 : body.length - zero - 1})` };
+        }
+        if(id === "TXXX" || id === "WXXX") {
+            const encoding = body[0], wide = encoding === 1 || encoding === 2;
+            let zero = 1;
+            while(zero < body.length && !(body[zero] === 0 && (!wide || body[zero + 1] === 0))) zero += wide ? 2 : 1;
+            return { id, label: text(body.subarray(1, zero), encoding), value: valueOf(text(body.subarray(zero + (wide ? 2 : 1)), id === "WXXX" ? 0 : encoding)) };
+        }
+        if(id[0] === "T") return { id, label: "", value: valueOf(text(body.subarray(1), body[0])) };
+        return { id, label: "", value: `bytes(${body.length})` };
     }
 
     // --- the Space's chat: who speaks, what they say -----------------------------------------------------------
@@ -735,7 +808,8 @@
     // lines: what was said, by whom, the last one as it's said
     // via: how its address came, as a guest or signed in
     // asked: how asking for its captions went
-    const chat = { socket: null, token: null, status: "", via: "", asked: "", askedFor: null, captions: 0, shapes: new Map(), speaker: null, caption: null, lines: [], timer: 0, retries: 0 };
+    // answers: what proxsee's answers were made of, by method, for the diagnostics
+    const chat = { socket: null, token: null, status: "", via: "", asked: "", askedFor: null, answers: {}, captions: 0, shapes: new Map(), speaker: null, caption: null, lines: [], timer: 0, retries: 0 };
     const captionsOn = () => localStorage[CAPTIONS_STORAGE] !== "0";
     const json = text => {
         if(typeof text !== "string") return text && typeof text === "object" ? text : null;
@@ -747,18 +821,20 @@
     };
     async function openChat(chatToken, token) {
         closeChat();
-        Object.assign(chat, { token, status: chatToken ? "connecting" : "no chat token", asked: "", captions: 0, shapes: new Map(), speaker: null, caption: null, lines: [], retries: 0 });
+        Object.assign(chat, { token, status: chatToken ? "connecting" : "no chat token", asked: "", answers: {}, captions: 0, shapes: new Map(), speaker: null, caption: null, lines: [], retries: 0 });
         report();
         if(!chatToken) return;
         const user = player.user;
         try {
             let access = await proxsee("accessChatPublic", { chat_token: chatToken }).catch(() => null);
             if(chat.token !== token) return;
+            chat.answers.accessChatPublic = shape(access);
             chat.via = "as a guest";
             if(!chatAddress(access)) {
                 chat.via = "signed in";
                 access = await signedIn(user, cookie => proxsee("accessChat", { chat_token: chatToken, cookie }));
                 if(chat.token !== token) return;
+                chat.answers.accessChat = shape(access);
             }
             const address = chatAddress(access);
             if(!address) throw failure("no chat address");
@@ -769,6 +845,22 @@
             chat.status = String(e?.message || e).slice(0, 80);
             report();
         }
+        // the captions asked for whether or not the chat opened, as x.com, which opens none, does
+        if(chat.token === token) askCaptions(token);
+    }
+    // what an answer of X's is made of, for the diagnostics: its fields' names and the kinds of their values, of an
+    // address its host only, nothing of what's in it
+    function shape(value, depth = 0) {
+        if(Array.isArray(value)) return `[${value.length ? shape(value[0], depth + 1) : ""}]`;
+        if(value && typeof value === "object") {
+            if(depth > 2) return "{…}";
+            return `{${Object.entries(value).slice(0, 24).map(([key, v]) => `${key.slice(0, 40)}:${shape(v, depth + 1)}`).join(",")}}`;
+        }
+        if(typeof value === "string") {
+            const address = value.match(/^(https?|wss?):\/\/([\w.-]+)/);
+            return address ? `${address[1]}://${address[2]}` : value ? "text" : "empty";
+        }
+        return value === null ? "null" : typeof value;
     }
     // the captions asked for, once for each Space played; how it went for the diagnostics
     async function askCaptions(token) {
@@ -777,7 +869,8 @@
         chat.askedFor = token;
         let asked = "ok";
         try {
-            await signedIn(user, cookie => proxsee("enableSpacesCaption", { broadcast_id: space.id, cookie }));
+            const answer = await signedIn(user, cookie => proxsee("enableSpacesCaption", { broadcast_id: space.id, cookie }));
+            if(chat.token === token) chat.answers.enableSpacesCaption = shape(answer);
         } catch(e) {
             asked = String(e?.message || e).slice(0, 80);
         }
@@ -842,7 +935,6 @@
             chat.status = `open, ${chat.via}`;
             chat.retries = 0;
             report();
-            askCaptions(token);
         });
         socket.addEventListener("message", e => {
             if(chat.socket === socket) heardChat(e.data);

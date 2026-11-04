@@ -412,6 +412,13 @@ test("the Spaces column's last check: how X answered its fleetline, its search a
     // how asking for the captions went
     await diagnostic(page, { kind: "spaces-player", state: "playing", error: "", chat: "open, signed in", captionsAsked: "enableSpacesCaption: HTTP 400", captions: 0, messages: [] });
     expect(await askReport(page)).toMatch(/; player playing at \d+ s, chat open, signed in, captions asked: enableSpacesCaption: HTTP 400, 0 captions\n/);
+    // what proxsee's answers, the stream's metadata and X's one on stage are made of
+    await diagnostic(page, { kind: "spaces-player", state: "playing", error: "", chat: "no chat address", captions: 0, messages: [],
+        answers: { accessChat: "{access_token:text,endpoint:empty}", enableSpacesCaption: "{caption_token:text}" }, metadata: ["TXXX(captions):{text:text} ×3"], participant: "{display_name:text}" });
+    const report = await askReport(page);
+    expect(report).toContain("\n  Spaces chat's answers: accessChat {access_token:text,endpoint:empty}; enableSpacesCaption {caption_token:text}\n");
+    expect(report).toContain("\n  Spaces stream's metadata: TXXX(captions):{text:text} ×3\n");
+    expect(report).toContain("\n  Spaces' one on stage: {display_name:text}\n");
 });
 
 test("the panel in the language picked in TweeXDeck's settings, not the browser's", async ({ page }) => {

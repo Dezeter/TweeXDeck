@@ -1,7 +1,7 @@
 {
     "name": "TweeXDeck",
     "description": "Returns old TweetDeck!",
-    "version": "5.23.1",
+    "version": "5.23.2",
     "manifest_version": 3,
     "homepage_url": "https://github.com/Dezeter/TweeXDeck",
     "permissions": [
