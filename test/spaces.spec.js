@@ -553,7 +553,10 @@ test("the player shows who's on stage, and from the Space's chat who speaks and 
     // for the load watchdog: the chat open, its captions, its kinds of messages by their fields' names only
     asked.chat.socket.send(chatMessage(2, { occupancy: 40, total_participants: 50 }));
     await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).messages)).toEqual(["1:45:body,final,timestamp,type,username", "2:-:occupancy,total_participants"]);
-    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1))).toMatchObject({ state: "playing", chat: "open, as a guest", captionsAsked: "ok", captions: 4 });
+    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1))).toMatchObject({ state: "playing", chat: "open, as a guest", captionsAsked: "ok", captions: 4,
+        // what proxsee's answers were made of, and X's one on stage: fields' names, kinds and hosts only
+        answers: { accessChatPublic: "{access_token:text,endpoint:https://chat.test,room_id:text,replay_endpoint:https://chat.test}", enableSpacesCaption: "{}" },
+        participant: "{periscope_user_id:text,display_name:text,twitter_screen_name:text,avatar_url:https://pbs.twimg.com,user_results:{rest_id:text,result:{__typename:text}}}" });
 
     // closed: the chat too
     await page.click(".otd-space-player-close");
@@ -569,8 +572,9 @@ test("the chat not to be had, as a guest or signed in: the Space plays all the s
     expect(asked.chat.socket).toBeNull();
     await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).chat)).toBe("accessChat: HTTP 403");
     expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1))).toMatchObject({ state: "playing", captions: 0 });
-    // refused with the login kept, it's asked again with a new one, once
-    expect(asked.filter(a => a.path.startsWith("/pscp/")).map(a => a.path)).toEqual(["/pscp/api/v2/accessChatPublic", "/pscp/api/v2/loginTwitterToken", "/pscp/api/v2/accessChat", "/pscp/api/v2/loginTwitterToken", "/pscp/api/v2/accessChat"]);
+    // refused with the login kept, it's asked again with a new one, once; the captions asked for all the same, as
+    // x.com, which opens no chat, asks
+    await expect.poll(() => asked.filter(a => a.path.startsWith("/pscp/")).map(a => a.path)).toEqual(["/pscp/api/v2/accessChatPublic", "/pscp/api/v2/loginTwitterToken", "/pscp/api/v2/accessChat", "/pscp/api/v2/loginTwitterToken", "/pscp/api/v2/accessChat", "/pscp/api/v2/enableSpacesCaption"]);
 });
 
 test("a Space whose chat a guest gets no address of: the chat as x.com's signed in listeners get it, the login kept", async ({ page }) => {
@@ -637,4 +641,40 @@ test("captions X won't turn on: the Space plays and its chat stays open, the dia
     await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).captionsAsked)).toBe("enableSpacesCaption: HTTP 400");
     expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).chat)).toBe("open, as a guest");
     expect(asked.chat.socket).not.toBeNull();
+});
+
+test("the stream's own metadata, ID3 in its chunks: what kinds come, for the diagnostics, nothing of what's in them", async ({ page }) => {
+    await open(page);
+    await expect.poll(() => cards(page)).toBe(4);
+    // the page's hls.js, its instance kept to hand it metadata as from a chunk
+    await page.evaluate(async () => {
+        const script = document.createElement("script");
+        script.textContent = await fetch("http://otd.test/ext/files/hls/hls.light.min.js").then(res => res.text());
+        document.head.append(script);
+        const Real = window.Hls;
+        window.Hls = class extends Real {
+            constructor(config) {
+                super(config);
+                window.__hls = this;
+            }
+        };
+    });
+    await listenButton(page, "1LiveAAAAAAAA").click();
+    await plays(page, 0.2);
+    await page.evaluate(() => {
+        const encode = text => [...new TextEncoder().encode(text)];
+        const size = n => [(n >> 21) & 0x7f, (n >> 14) & 0x7f, (n >> 7) & 0x7f, n & 0x7f];
+        const frame = (id, body) => [...encode(id), ...size(body.length), 0, 0, ...body];
+        const frames = [
+            ...frame("PRIV", [...encode("com.apple.streaming.transportStreamTimestamp"), 0, 0, 0, 0, 0, 0, 0, 0, 1]),
+            ...frame("TXXX", [3, ...encode("captions"), 0, ...encode(JSON.stringify({ speaker: "alice", text: "Привет", final: true }))]),
+        ];
+        const tag = new Uint8Array([0x49, 0x44, 0x33, 4, 0, 0, ...size(frames.length), ...frames]);
+        // as hls.js has it from a chunk: the fragment's times, for its own cues of them
+        for(let i = 0; i < 2; i++) window.__hls.trigger(Hls.Events.FRAG_PARSING_METADATA, { id: "main", frag: { start: 2 * i, duration: 2, end: 2 * i + 2, sn: i, level: 0, type: "main" }, details: { live: true }, samples: [{ data: tag, pts: 2 * i + 0.5, dts: 2 * i + 0.5, len: tag.length, duration: Infinity, type: "https://aomedia.org/emsg/ID3" }] });
+    });
+    await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).metadata)).toEqual([
+        "PRIV(com.apple.streaming.transportStreamTimestamp):bytes(8) ×2",
+        "TXXX(captions):{speaker:text,text:text,final:boolean} ×2",
+    ]);
 });
