@@ -403,4 +403,7 @@ test("the Spaces column's last check: how X answered its fleetline, its search a
     expect(await askReport(page)).toMatch(/\nSpaces column: fleetline ok, search HTTP 429, details 3 fine, 1 failed \(HTTP 404\); 2 live, 1 to come, at \d+ s\n/);
     await diagnostic(page, { kind: "spaces-player", state: "failed", error: "HTTP 403" });
     expect(await askReport(page)).toMatch(/\nSpaces column: fleetline ok, [^\n]*, at \d+ s; player failed \(HTTP 403\) at \d+ s\n/);
+    // its chat: open, its captions, the kinds of messages it had by their fields' names
+    await diagnostic(page, { kind: "spaces-player", state: "playing", error: "", chat: "open", captions: 12, messages: ["1:45:body,final,username", "2:-:occupancy"] });
+    expect(await askReport(page)).toMatch(/; player playing at \d+ s, chat open, 12 captions, messages 1:45:body,final,username; 2:-:occupancy\n/);
 });

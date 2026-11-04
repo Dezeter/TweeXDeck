@@ -20,6 +20,22 @@ const MAIN = 'e.exports={queryId:"Space_1",operationName:"AudioSpaceById",operat
 const ALICE = "1600000000000000001";
 // a Space's audio as HLS: 6 s of a tone in MP3, in three segments and a short one
 const FIXTURES = path.join(__dirname, "fixtures", "space");
+// a live Space's playlist: its three segments over and over, one more every 2 s from its first request
+const SEGMENTS = [["s0.ts", 2.011422], ["s1.ts", 2.011433], ["s2.ts", 1.9853]];
+function live() {
+    let start = 0;
+    return () => {
+        start ||= Date.now();
+        const count = 3 + Math.floor((Date.now() - start) / 2000);
+        const lines = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-TARGETDURATION:2", "#EXT-X-MEDIA-SEQUENCE:0"];
+        for(let i = 0; i < count; i++) {
+            const [file, duration] = SEGMENTS[i % 3];
+            if(i && i % 3 === 0) lines.push("#EXT-X-DISCONTINUITY");
+            lines.push(`#EXTINF:${duration},`, file);
+        }
+        return `${lines.join("\n")}\n`;
+    };
+}
 const person = (id, name) => ({ periscope_user_id: `p${id}`, display_name: name, twitter_screen_name: name.toLowerCase(), avatar_url: `https://pbs.twimg.com/profile_images/${id}/a_normal.jpg`, user_results: { rest_id: id, result: { __typename: "User" } } });
 const host = (id, name) => ({ result: { __typename: "User", rest_id: id, core: { name, screen_name: name.toLowerCase() }, avatar: { image_url: `https://pbs.twimg.com/profile_images/${id}/h_normal.jpg` } } });
 const audioSpace = ({ id, state, title = "", creator, started, scheduled, listening = 0, admins = [], speakers = [], listeners = [] }) => ({ data: { audioSpace: {
@@ -71,9 +87,17 @@ async function open(page, { user = "1", main = MAIN, answer = {}, clock = "fixed
     const asked = [];
     const answers = { fleetline: () => [200, FLEETLINE], search: () => [200, SEARCH], space: id => [200, SPACES[id] ?? { data: {} }],
         stream: key => [200, { source: { location: `https://stream.test/${key}/playlist.m3u8?type=live`, status: "LIVE_PUBLIC", streamType: "HLS" }, chatToken: "chat-1" }],
-        // the Space's audio: a live one's playlist without its end, as X's is until the Space ends
-        playlist: () => fs.readFileSync(path.join(FIXTURES, "playlist.m3u8"), "utf8").replace("#EXT-X-ENDLIST\n", ""), ...answer };
+        chat: () => [200, { access_token: "access-1", endpoint: "https://chat.test", room_id: "room-1", replay_endpoint: "https://chat.test" }],
+        // the Space's audio: a live one's playlist, a segment more every 2 s, as X's is until the Space ends
+        playlist: live(), ...answer };
     const reply = (route, [status, body]) => route.fulfill({ status, contentType: "application/json", headers: CORS, body: typeof body === "string" ? body : JSON.stringify(body) });
+    // the chat's WebSocket, before the page opens as Playwright has it: what the page sent it, and a way to send
+    // the page what X's chat would
+    asked.chat = { sent: [], socket: null };
+    await page.routeWebSocket("wss://chat.test/chatapi/v1/chatnow", ws => {
+        asked.chat.socket = ws;
+        ws.onMessage(message => asked.chat.sent.push(JSON.parse(message)));
+    });
     await openPage(page, { storage: { device_id: "device-1" }, routes: {
         "https://otd.test/": route => {
             const request = route.request(), url = new URL(request.url()), actAs = request.headers()["x-act-as-user-id"] || null;
@@ -105,6 +129,12 @@ async function open(page, { user = "1", main = MAIN, answer = {}, clock = "fixed
             const headers = { "access-control-allow-origin": "*" };
             if(name.endsWith(".m3u8")) return route.fulfill({ contentType: "application/vnd.apple.mpegurl", headers, body: answers.playlist() });
             return route.fulfill({ contentType: "video/mp2t", headers, body: fs.readFileSync(path.join(FIXTURES, name)) });
+        },
+        // the Space's chat: its address and token for the stream's chat token
+        "https://proxsee.pscp.tv/": route => {
+            const request = route.request();
+            asked.push({ path: `/pscp${new URL(request.url()).pathname}`, body: request.postDataJSON() });
+            return reply(route, answers.chat());
         },
         "https://abs.twimg.com/": route => {
             asked.push({ path: new URL(route.request().url()).pathname });
@@ -413,4 +443,120 @@ test("hls.js goes on the page as a global even where the page has an AMD loader"
     await listenButton(page, "1LiveAAAAAAAA").click();
     await expect.poll(async () => (await audio(page))?.time ?? 0, { timeout: 15000 }).toBeGreaterThan(0.5);
     expect(await page.evaluate(() => [typeof window.Hls, !!window.__defined, typeof window.define])).toEqual(["function", false, "function"]);
+});
+
+// a message of the Space's chat as X's sends it: JSON in JSON in JSON
+const chatMessage = (kind, body, sender) => JSON.stringify({ kind, payload: JSON.stringify({ room: "room-1", body: JSON.stringify(body), sender }), signature: "sig" });
+const caption = (username, text, final = false) => chatMessage(1, { body: text, final, username, type: 45, timestamp: 1 }, { username, display_name: username });
+const stageShown = page => page.evaluate(() => [...document.querySelectorAll(".otd-space-player-face")].map(face => `${face.title}${face.classList.contains("is-speaking") ? " *" : ""}`));
+const captionLines = page => page.evaluate(() => [...document.querySelectorAll(".otd-space-player-caption:not([hidden]) > .otd-space-player-line")].map(line => line.textContent));
+const captionShown = page => page.evaluate(() => {
+    const box = document.querySelector(".otd-space-player-caption");
+    return box && !box.hidden ? box.textContent : null;
+});
+
+test("the player shows who's on stage, and from the Space's chat who speaks and what they say", async ({ page }) => {
+    const asked = await open(page);
+    await expect.poll(() => cards(page)).toBe(4);
+    await listenButton(page, "1LiveAAAAAAAA").click();
+    await expect.poll(async () => (await audio(page))?.time ?? 0, { timeout: 15000 }).toBeGreaterThan(0.2);
+    // the host, the co-hosts and the speakers, as AudioSpaceById has them
+    expect(await stageShown(page)).toEqual(["Hana @hana", "Alice @alice", "Gus @gus"]);
+
+    // the chat asked for as x.com's listeners do: its address for the stream's chat token, then told its token and room
+    await expect.poll(() => asked.chat.sent.length).toBe(2);
+    expect(asked.find(a => a.path.startsWith("/pscp/"))).toEqual({ path: "/pscp/api/v2/accessChatPublic", body: { chat_token: "chat-1" } });
+    expect(asked.chat.sent.map(m => [m.kind, JSON.parse(m.payload)])).toEqual([
+        [3, { access_token: "access-1" }],
+        [2, { body: JSON.stringify({ room: "room-1" }), kind: 1 }],
+    ]);
+    // no button for captions before there are any
+    expect(await page.locator(".otd-space-player-cc").isHidden()).toBe(true);
+
+    // Alice speaks: her face marked, her words under it as they come, the caption's text as text
+    asked.chat.socket.send(caption("alice", "Всем привет"));
+    await expect.poll(() => stageShown(page)).toEqual(["Hana @hana", "Alice @alice *", "Gus @gus"]);
+    expect((await playerShown(page)).state).toBe("Говорит Alice");
+    expect(await captionShown(page)).toBe("Alice: Всем привет");
+    asked.chat.socket.send(caption("alice", "Всем привет, сегодня <b>о главном</b>", true));
+    await expect.poll(() => captionShown(page)).toBe("Alice: Всем привет, сегодня <b>о главном</b>");
+    // the speaker's name in bold, what they say as text
+    expect(await page.locator(".otd-space-player-caption b").allTextContents()).toEqual(["Alice:"]);
+    // someone not on stage by AudioSpaceById's last answer: by the chat's name
+    asked.chat.socket.send(caption("newcomer", "Можно вопрос?"));
+    await expect.poll(() => playerShown(page).then(p => p.state)).toBe("Говорит newcomer");
+    expect(await stageShown(page)).toEqual(["Hana @hana", "Alice @alice", "Gus @gus"]);
+
+    // across the column, edge to edge, what was said before over the last one; kept
+    await page.click(".otd-space-player-wide");
+    await expect.poll(() => captionLines(page)).toEqual(["Alice: Всем привет, сегодня <b>о главном</b>", "newcomer: Можно вопрос?"]);
+    expect(await page.evaluate(() => {
+        const box = document.querySelector(".otd-space-player").getBoundingClientRect(), lines = document.querySelector(".otd-space-player-caption").getBoundingClientRect();
+        return [Math.round(lines.left - box.left), Math.round(box.right - lines.right)];
+    })).toEqual([0, 0]);
+    expect(await page.evaluate(() => localStorage.OTDspacesCaptionsWide)).toBe("1");
+    expect(await page.locator(".otd-space-player-wide").getAttribute("aria-pressed")).toBe("true");
+    // a click on them folds them back: the last one under the faces
+    await page.click(".otd-space-player-caption");
+    await expect.poll(() => captionLines(page)).toEqual(["newcomer: Можно вопрос?"]);
+    expect(await page.evaluate(() => localStorage.OTDspacesCaptionsWide)).toBeUndefined();
+
+    // a while after the last caption no one speaks, the caption goes later
+    await expect.poll(() => playerShown(page).then(p => p.state), { timeout: 6000 }).toBe("В эфире · Hana");
+    expect(await captionShown(page)).toBe("newcomer: Можно вопрос?");
+    await expect.poll(() => captionShown(page), { timeout: 10000 }).toBeNull();
+
+    // captions off, kept: who speaks still shows
+    await page.click(".otd-space-player-cc");
+    expect(await page.evaluate(() => localStorage.OTDspacesCaptions)).toBe("0");
+    asked.chat.socket.send(caption("gus", "Согласен"));
+    await expect.poll(() => playerShown(page).then(p => p.state)).toBe("Говорит Gus");
+    expect(await captionShown(page)).toBeNull();
+    expect(await page.locator(".otd-space-player-cc").getAttribute("aria-pressed")).toBe("false");
+
+    // for the load watchdog: the chat open, its captions, its kinds of messages by their fields' names only
+    asked.chat.socket.send(chatMessage(2, { occupancy: 40, total_participants: 50 }));
+    await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).messages)).toEqual(["1:45:body,final,timestamp,type,username", "2:-:occupancy,total_participants"]);
+    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1))).toMatchObject({ state: "playing", chat: "open", captions: 4 });
+
+    // closed: the chat too
+    await page.click(".otd-space-player-close");
+    await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).chat)).toBe("closed");
+});
+
+test("the chat not to be had: the Space plays all the same", async ({ page }) => {
+    const asked = await open(page, { answer: { chat: () => [403, ""] } });
+    await expect.poll(() => cards(page)).toBe(4);
+    await listenButton(page, "1LiveAAAAAAAA").click();
+    await expect.poll(async () => (await audio(page))?.time ?? 0, { timeout: 15000 }).toBeGreaterThan(0.5);
+    expect((await playerShown(page)).state).toBe("В эфире · Hana");
+    expect(asked.chat.socket).toBeNull();
+    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1))).toMatchObject({ state: "playing", chat: "HTTP 403", captions: 0 });
+});
+
+test("the player's buttons and the cards' keep their look in the dark theme with the pointer over them and pressed", async ({ page }) => {
+    const asked = await open(page);
+    await expect.poll(() => cards(page)).toBe(4);
+    await page.evaluate(() => document.documentElement.classList.add("dark"));
+    await listenButton(page, "1LiveAAAAAAAA").click();
+    await expect.poll(() => asked.chat.sent.length).toBe(2);
+    asked.chat.socket.send(caption("alice", "Привет"));
+    await expect.poll(() => page.locator(".otd-space-player-cc").isVisible()).toBe(true);
+    // TweetDeck's dark theme has its light blue under the pointer, a ring pressed or with the focus
+    const looks = async selector => {
+        const target = page.locator(selector).first();
+        await target.hover();
+        await page.mouse.down();
+        const look = await target.evaluate(el => { const st = getComputedStyle(el); return [st.backgroundColor, st.boxShadow, st.borderTopWidth]; });
+        await page.mouse.up();
+        await page.mouse.move(0, 0);
+        return look;
+    };
+    // in an order where pressing one leaves the next there: the close last
+    for(const selector of [".otd-space-player-toggle", ".otd-space-player-wide", ".otd-space-player-cc", ".otd-spaces-refresh", '[data-column="s1"] .otd-space[data-space-id="1LiveBBBBBBBB"] .otd-space-listen', ".otd-space-player-close"]) {
+        const [background, shadow, border] = await looks(selector);
+        expect(background, selector).not.toBe("rgb(234, 245, 253)");
+        expect(border, selector).toBe("0px");
+        if(!selector.includes("-cc")) expect(shadow, selector).toBe("none");
+    }
 });
