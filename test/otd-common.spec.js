@@ -71,6 +71,23 @@ test.describe("target language", () => {
     });
 });
 
+test.describe("TweeXDeck's language", () => {
+    test.use({ locale: "ru-RU" });
+    test("is the one picked in the settings, the browser's without it or with one it doesn't have; dates and numbers its way", async ({ page }) => {
+        const language = async storage => {
+            await openPage(page, { storage });
+            await addScripts(page, "src/otd-common.js");
+            return page.evaluate(() => [OTD.UI_LANG, OTD.LOCALE, OTD.label({ ru: "да", en: "yes" })]);
+        };
+        expect(await language()).toEqual(["ru", "ru-RU", "да"]);
+        expect(await language({ OTDuiLang: "en" })).toEqual(["en", "en", "yes"]);
+        expect(await language({ OTDuiLang: "ru" })).toEqual(["ru", "ru-RU", "да"]);
+        expect(await language({ OTDuiLang: "xx" })).toEqual(["ru", "ru-RU", "да"]);
+        // the translations' language stays the browser's
+        expect(await page.evaluate(() => { localStorage.OTDuiLang = "en"; return OTD.targetLang(); })).toBe("ru");
+    });
+});
+
 test("watchers share one observer and frame, and one failing doesn't stop the others", async ({ page }) => {
     await openPage(page);
     await addScripts(page, "src/otd-common.js");

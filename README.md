@@ -76,7 +76,7 @@ When a new release is out, TweeXDeck tells you about it once. Download it from t
 
 ## Settings
 
-TweeXDeck's settings are tabs of TweetDeck's own settings dialog, under a "TweeXDeck" heading after General, Link Shortening and Mute: Appearance, Translation, Columns, Tweets, Media, Composing and Other. They have a switch for every feature below, all on by default, and the language to translate to. All of the look is under Appearance: TweetDeck's own theme, column width and text size, which General now points to instead of showing them, with Lights out, the density, the font, the icons and readability. A field at the top of each tab finds a setting by any word of it, in Russian or English, in all of the tabs. What's under Appearance applies at once; the rest after a reload, and the tab says when one is needed, with a link for it. The dialog is larger than TweetDeck's, up to 1000 by 760 pixels, and fits a smaller window.
+TweeXDeck's settings are tabs of TweetDeck's own settings dialog, under a "TweeXDeck" heading after General, Link Shortening and Mute: Appearance, Translation, Columns, Tweets, Media, Composing and Other. They have a switch for every feature below, all on by default, and the language to translate to. First under Appearance is **TweeXDeck's language**, Russian or English, the browser's until another is picked: the settings, the Spaces column, the messages and the rest of what TweeXDeck adds, and how it writes dates and numbers, after a reload; TweetDeck's own menus are in English either way, and translations keep their own language. All of the look is under Appearance: TweetDeck's own theme, column width and text size, which General now points to instead of showing them, with Lights out, the density, the font, the icons and readability. A field at the top of each tab finds a setting by any word of it, in Russian or English, in all of the tabs. What's under Appearance applies at once; the rest after a reload, and the tab says when one is needed, with a link for it. The dialog is larger than TweetDeck's, up to 1000 by 760 pixels, and fits a smaller window.
 
 The same settings are kept in `localStorage`, so they can also be changed from the browser console on the TweetDeck tab (`"0"` turns a feature off, removing the key turns it back on):
 
@@ -85,6 +85,7 @@ The same settings are kept in `localStorage`, so they can also be changed from t
 | Translating tweets with Grok | `OTDgrokTranslate` |
 | Translating articles with Google | `OTDarticlesTranslate` |
 | Language to translate to (default: the browser's) | `OTDgrokTranslateLang`, e.g. `'ru'` |
+| TweeXDeck's language (default: the browser's) | `OTDuiLang`, `'ru'` or `'en'` |
 | Hiding replies in home columns | `OTDhideHomeReplies` |
 | Grouping notifications | `OTDgroupNotifications` |
 | Holding a column under the pointer | `OTDpauseOnHover` |

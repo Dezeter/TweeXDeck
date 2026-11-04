@@ -2,7 +2,18 @@
 // styles, and one watcher of the page for the scripts that rescan it. Loaded by injection.js after bundle.js,
 // before the other local scripts, as window.OTD.
 (() => {
-    const UI_LANG = (navigator.language || "en").split("-")[0].toLowerCase();
+    // The language of TweeXDeck's own texts: the one picked in the settings tab (OTDuiLang), the browser's without it.
+    // TweetDeck's own are in English either way. Dates and numbers are written the browser's way, or the picked
+    // language's when it's another.
+    const UI_LANG_STORAGE = "OTDuiLang";
+    const UI_LANGS = ["ru", "en"];
+    const BROWSER_LANG = (navigator.language || "en").split("-")[0].toLowerCase();
+    let picked = "";
+    try {
+        picked = localStorage[UI_LANG_STORAGE] || "";
+    } catch(e) {}
+    const UI_LANG = UI_LANGS.includes(picked) ? picked : BROWSER_LANG;
+    const LOCALE = UI_LANG === BROWSER_LANG ? navigator.language || "en" : UI_LANG;
     // injection.js puts the extension's version and the address of its files on <html>
     const VERSION = document.documentElement.dataset.otdVersion || "";
     const BASE_URL = document.documentElement.dataset.otdBase || "";
@@ -380,5 +391,5 @@
         html.dark .dropdown-menu [data-otd-action], .dropdown-menu .is-selected [data-otd-action] { color: #fff; }
     `);
 
-    window.OTD = { UI_LANG, VERSION, BASE_URL, FEATURES, LANG_STORAGE, FONT_STORAGE, FONTS, DENSITY_STORAGE, THEME_SYSTEM_STORAGE, MEDIA_STORAGE, isOn, setOn, setValue, onChange, isLive, htmlClassWhileOn, targetLang, label, cookie, sleep, xHeaders, chirpFor, actionsChirp, openMenuChirp, mediaFiles, notify, attachFiles, addComposerButton, jQuery, addStyle, watch };
+    window.OTD = { UI_LANG, UI_LANG_STORAGE, UI_LANGS, BROWSER_LANG, LOCALE, VERSION, BASE_URL, FEATURES, LANG_STORAGE, FONT_STORAGE, FONTS, DENSITY_STORAGE, THEME_SYSTEM_STORAGE, MEDIA_STORAGE, isOn, setOn, setValue, onChange, isLive, htmlClassWhileOn, targetLang, label, cookie, sleep, xHeaders, chirpFor, actionsChirp, openMenuChirp, mediaFiles, notify, attachFiles, addComposerButton, jQuery, addStyle, watch };
 })();

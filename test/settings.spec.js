@@ -44,9 +44,10 @@ test("TweeXDeck's tabs after TweetDeck's own, one for each section, a switch for
     expect(await page.textContent('#otd-settings [data-feature="groupNotifications"]')).toBe(" Группировать лайки, ретвиты и подписки в уведомлениях");
     // "what: how" is a title and a hint under it
     expect(await page.$$eval('#otd-settings [data-feature="selfThreads"] span', spans => spans.map(span => span.firstChild.textContent))).toEqual(["Треды автора", "Без «Replying to @автор», соседние твиты треда соединены линией"]);
-    // "Appearance" has TweetDeck's theme and column width, and density and font, with the switches they go with
+    // "Appearance" has TweeXDeck's language first, TweetDeck's theme and column width, and density and font, with the
+    // switches they go with
     expect(await page.$$eval('#otd-settings .otd-settings-section[data-section="appearance"] > div', rows => rows.map(row => row.dataset.feature || row.className.replace("otd-settings-select ", "")))).toEqual(
-        ["otd-settings-theme", "lightsOut", "otd-settings-width", "otd-settings-font-size", "otd-settings-density", "otd-settings-font", "svgIcons", "modernLook"]);
+        ["otd-settings-ui-lang", "otd-settings-theme", "lightsOut", "otd-settings-width", "otd-settings-font-size", "otd-settings-density", "otd-settings-font", "svgIcons", "modernLook"]);
     expect(await page.textContent("#otd-settings .otd-settings-about")).toBe("TweeXDeck 5.1.0 · Релизы и обновления · Скопировать диагностику");
     expect(await page.getAttribute("#otd-settings .otd-settings-about a", "href")).toBe("https://github.com/Dezeter/TweeXDeck/releases");
     await expect(page.locator("#otd-settings .otd-settings-note")).toBeHidden();
@@ -88,6 +89,28 @@ test("the language select writes OTDgrokTranslateLang and keeps a code it doesn'
     await select.selectOption("");
     expect(await page.evaluate(() => localStorage.OTDgrokTranslateLang ?? null)).toBeNull();
     await expect(page.locator("#otd-settings .otd-settings-note")).toBeVisible();
+});
+
+test("TweeXDeck's language, first in \"Appearance\": the browser's or one picked, in OTDuiLang, after a reload", async ({ page }) => {
+    await openSettings(page);
+    await tab(page, "Внешний вид");
+    const select = page.locator("#otd-settings .otd-settings-ui-lang select");
+    expect(await page.evaluate(() => document.querySelector("#otd-settings .otd-settings-section .otd-settings-select")?.classList.contains("otd-settings-ui-lang"))).toBe(true);
+    await expect(select).toHaveValue("");
+    expect(await select.locator("option").allTextContents()).toEqual(["русский (язык браузера)", "Русский", "English"]);
+    await select.selectOption("en");
+    expect(await page.evaluate(() => localStorage.OTDuiLang)).toBe("en");
+    await expect(page.locator("#otd-settings .otd-settings-note")).toBeVisible();
+
+    // the next time the page loads, TweeXDeck's tabs are in English in a Russian browser
+    await openSettings(page, { storage: { OTDuiLang: "en" } });
+    await tab(page, "Appearance");
+    expect(await page.$$eval("#otd-settings .otd-settings-section > label", labels => labels.map(l => l.textContent))).toEqual(["Appearance", "Translation", "Columns", "Tweets", "Media", "Composing", "Other"]);
+    await expect(page.locator("#otd-settings .otd-settings-ui-lang select")).toHaveValue("en");
+    expect(await page.locator("#otd-settings .otd-settings-ui-lang .otd-settings-select-title").textContent()).toBe("TweeXDeck's language");
+    // back to the browser's: the key goes
+    await page.locator("#otd-settings .otd-settings-ui-lang select").selectOption("");
+    expect(await page.evaluate(() => localStorage.OTDuiLang ?? null)).toBeNull();
 });
 
 test("the font select lists the fonts, writes OTDfont, and goes back to TweetDeck's own without the key", async ({ page }) => {

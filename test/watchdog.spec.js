@@ -407,3 +407,12 @@ test("the Spaces column's last check: how X answered its fleetline, its search a
     await diagnostic(page, { kind: "spaces-player", state: "playing", error: "", chat: "open", captions: 12, messages: ["1:45:body,final,username", "2:-:occupancy"] });
     expect(await askReport(page)).toMatch(/; player playing at \d+ s, chat open, 12 captions, messages 1:45:body,final,username; 2:-:occupancy\n/);
 });
+
+test("the panel in the language picked in TweeXDeck's settings, not the browser's", async ({ page }) => {
+    await openWatched(page, { headers: { "content-security-policy": X_POLICY }, storage: { OTDuiLang: "ru" } });
+    await inject(page);
+    await reloaded(page, 1000);
+    await inject(page);
+    await page.clock.runFor(5000);
+    await expect(panel(page)).toContainText("TweetDeck не загрузился");
+});

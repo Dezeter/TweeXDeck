@@ -1,7 +1,7 @@
 // TweeXDeck's tabs in TweetDeck's settings, under a "TweeXDeck" heading after TweetDeck's own: one for each section
 // of OTD.FEATURES, a switch for every feature in it, the language to translate to under "Translation", and under
-// "Appearance" all of the look: TweetDeck's theme, column width and font size with ours, Lights out, density, font,
-// icons and readability. TweetDeck's General tab keeps its other settings and points to "Appearance" for those.
+// "Appearance" TweeXDeck's own language first, then all of the look: TweetDeck's theme, column width and font size
+// with ours, Lights out, density, font, icons and readability. TweetDeck's General tab keeps its other settings and points to "Appearance" for those.
 // A search field on each tab finds a setting in any of them. A label "What: how" shows as a title with a hint
 // under it. Switches write the localStorage keys the features read; what a script listens to (OTD.onChange)
 // applies at once, the rest after a reload, and the tab says so. The dialog is larger than TweetDeck's, up to the
@@ -16,7 +16,7 @@
     const SECTIONS = [...new Set(OTD.FEATURES.map(f => f.section))];
     const RELEASES = "https://github.com/Dezeter/TweeXDeck/releases";
     const LABELS = {
-        ru: { lang: "Переводить на", browser: "язык браузера", font: "Шрифт", systemFont: "системный, как в TweetDeck", reload: "Применится после перезагрузки.", reloadNow: "Перезагрузить", releases: "Релизы и обновления",
+        ru: { lang: "Переводить на", browser: "язык браузера", uiLang: "Язык TweeXDeck", uiLangSearch: "язык интерфейса", font: "Шрифт", systemFont: "системный, как в TweetDeck", reload: "Применится после перезагрузки.", reloadNow: "Перезагрузить", releases: "Релизы и обновления",
             diagnostics: "Скопировать диагностику", copied: "Скопировано", search: "Поиск по настройкам", nothing: "Ничего не нашлось",
             theme: "Тема", themes: { light: "светлая", dark: "тёмная", system: "как в системе" },
             columnWidth: "Ширина колонок", widths: { narrow: "узкие", medium: "средние", wide: "широкие", superwide: "очень широкие", flex: "по ширине окна (flex)" },
@@ -25,7 +25,7 @@
             density: "Плотность", densities: { "": "компактно, как в TweetDeck", comfortable: "свободно: больше воздуха, текст от 15 px" },
             media: "Фото в превью Medium и Large", medias: { "": "полосой, как в TweetDeck", whole: "целиком" },
             sections: { appearance: "Внешний вид", translation: "Перевод", columns: "Колонки", tweets: "Твиты", media: "Медиа", compose: "Написание", other: "Прочее" } },
-        en: { lang: "Translate to", browser: "browser language", font: "Font", systemFont: "system, as in TweetDeck", reload: "Applies after a reload.", reloadNow: "Reload now", releases: "Releases and updates",
+        en: { lang: "Translate to", browser: "browser language", uiLang: "TweeXDeck's language", uiLangSearch: "interface language", font: "Font", systemFont: "system, as in TweetDeck", reload: "Applies after a reload.", reloadNow: "Reload now", releases: "Releases and updates",
             diagnostics: "Copy diagnostics", copied: "Copied", search: "Search settings", nothing: "Nothing found",
             theme: "Theme", themes: { light: "light", dark: "dark", system: "as the system" },
             columnWidth: "Column width", widths: { narrow: "narrow", medium: "medium", wide: "wide", superwide: "super wide", flex: "fit the window (flex)" },
@@ -114,6 +114,15 @@
             [LABELS.ru.lang, LABELS.en.lang], changed, OTD.LANG_STORAGE);
     }
 
+    // the language of TweeXDeck's own texts, read as the page loads (otd-common.js): the browser's without the key;
+    // each language by its own name
+    const UI_LANG_NAMES = { ru: "Русский", en: "English" };
+    const uiLangRow = changed => selectRow("otd-settings-ui-lang", LABEL.uiLang,
+        [["", `${names.of(OTD.BROWSER_LANG) || OTD.BROWSER_LANG} (${LABEL.browser})`], ...OTD.UI_LANGS.map(code => [code, UI_LANG_NAMES[code] || code])],
+        OTD.UI_LANGS.includes(localStorage[OTD.UI_LANG_STORAGE]) ? localStorage[OTD.UI_LANG_STORAGE] : "",
+        value => OTD.setValue(OTD.UI_LANG_STORAGE, value),
+        [LABELS.ru.uiLang, LABELS.en.uiLang, LABELS.ru.uiLangSearch, LABELS.en.uiLangSearch, ...Object.values(UI_LANG_NAMES)], changed, OTD.UI_LANG_STORAGE);
+
     // fonts.js draws the one picked here; TweetDeck's own without the key
     const fontRow = changed => selectRow("otd-settings-font", LABEL.font, [["", LABEL.systemFont], ...OTD.FONTS.map(font => [font.key, font.name])],
         OTD.FONTS.some(font => font.key === localStorage[OTD.FONT_STORAGE]) ? localStorage[OTD.FONT_STORAGE] : "",
@@ -141,7 +150,7 @@
     function sectionRows(section, changed) {
         const rows = [];
         const before = {
-            appearance: { lightsOut: [themeRow], svgIcons: [widthRow, fontSizeRow, densityRow, fontRow] },
+            appearance: { lightsOut: [uiLangRow, themeRow], svgIcons: [widthRow, fontSizeRow, densityRow, fontRow] },
             media: { inlineVideo: [mediaRow] },
         }[section] || {};
         for(const feature of OTD.FEATURES.filter(f => f.section === section)) {

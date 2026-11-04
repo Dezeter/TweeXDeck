@@ -43,7 +43,14 @@
         }
     })();
     const ISSUES = "https://github.com/Dezeter/TweeXDeck/issues";
-    const RU = (navigator.language || "en").toLowerCase().startsWith("ru");
+    // the language picked in TweeXDeck's settings (OTDuiLang), the browser's without it
+    const RU = (() => {
+        let picked = "";
+        try {
+            picked = localStorage.OTDuiLang || "";
+        } catch(e) {}
+        return (["ru", "en"].includes(picked) ? picked : navigator.language || "en").toLowerCase().startsWith("ru");
+    })();
     const T = RU ? {
         title: "TweetDeck не загрузился",
         noExtension: "Расширение не запустилось на странице: его скрипт не получил ответа. Перезагрузите страницу; если не поможет — перезапустите браузер или переустановите расширение.",
