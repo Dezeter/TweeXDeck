@@ -1758,7 +1758,7 @@ const proxyRoutes = [
             xhr.storage.user_id = xhr.modReqHeaders["x-act-as-user-id"] ?? getCurrentUserId();
             xhr.modReqHeaders["Content-Type"] = "application/json";
             xhr.modReqHeaders["X-Twitter-Active-User"] = "yes";
-            xhr.modReqHeaders["X-Twitter-Client-Language"] = navigator.language.split("-")[0];
+            xhr.modReqHeaders["X-Twitter-Client-Language"] = (["ru", "en"].includes(localStorage.OTDuiLang) ? localStorage.OTDuiLang : navigator.language).split("-")[0];
             xhr.modReqHeaders["Authorization"] =
                 PUBLIC_TOKENS[0];
             delete xhr.modReqHeaders["X-Twitter-Client-Version"];

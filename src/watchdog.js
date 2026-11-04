@@ -43,7 +43,14 @@
         }
     })();
     const ISSUES = "https://github.com/Dezeter/TweeXDeck/issues";
-    const RU = (navigator.language || "en").toLowerCase().startsWith("ru");
+    // the language picked in TweeXDeck's settings (OTDuiLang), the browser's without it
+    const RU = (() => {
+        let picked = "";
+        try {
+            picked = localStorage.OTDuiLang || "";
+        } catch(e) {}
+        return (["ru", "en"].includes(picked) ? picked : navigator.language || "en").toLowerCase().startsWith("ru");
+    })();
     const T = RU ? {
         title: "TweetDeck не загрузился",
         noExtension: "Расширение не запустилось на странице: его скрипт не получил ответа. Перезагрузите страницу; если не поможет — перезапустите браузер или переустановите расширение.",
@@ -160,7 +167,10 @@
         else if(entry.kind === "request") pending.set(entry.id, { method: String(entry.method), url: clean(entry.url), at: Date.now() });
         else if(entry.kind === "solver") solver = { ok: !!entry.ok, text: String(entry.text || ""), at: Date.now() };
         else if(entry.kind === "theme") theme = String(entry.text || "");
-        else if(entry.kind === "spaces-player") spacesPlayer = { state: String(entry.state || ""), error: String(entry.error || "").slice(0, 80), at: Date.now() };
+        else if(entry.kind === "spaces-player") spacesPlayer = { state: String(entry.state || ""), error: String(entry.error || "").slice(0, 80), at: Date.now(),
+            chat: String(entry.chat || "").slice(0, 40), captions: Number(entry.captions) || 0,
+            recovered: Array.isArray(entry.recovered) ? entry.recovered.slice(0, 3).map(r => String(r).slice(0, 100)) : [],
+            messages: Array.isArray(entry.messages) ? entry.messages.slice(0, 12).map(m => String(m).slice(0, 120)) : [] };
         else if(entry.kind === "spaces") spaces = { fleetline: String(entry.fleetline || "—"), search: String(entry.search || "—"), details: String(entry.details || ""), live: Number(entry.live) || 0, coming: Number(entry.coming) || 0, at: Date.now() };
         else if(entry.kind === "poll") {
             const feed = String(entry.feed);
@@ -420,7 +430,7 @@
             ...[...failed.values()].map(r => `  ${describe(r)} ${times(r)}`),
             `Columns asking for new tweets: ${polls.size ? "" : "none yet"}`,
             ...[...polls].map(([feed, p]) => `  ${feed} ×${p.count} (${p.cursorless} without a top cursor), the last at ${seconds(p.at)}, the last with tweets ${p.tweets ? `at ${seconds(p.tweets)}` : "none"}`),
-            `Spaces column: ${spaces ? `fleetline ${spaces.fleetline}, search ${spaces.search}, details ${spaces.details}; ${spaces.live} live, ${spaces.coming} to come, at ${seconds(spaces.at)}` : "no news"}${spacesPlayer ? `; player ${spacesPlayer.state}${spacesPlayer.error ? ` (${spacesPlayer.error})` : ""} at ${seconds(spacesPlayer.at)}` : ""}`,
+            `Spaces column: ${spaces ? `fleetline ${spaces.fleetline}, search ${spaces.search}, details ${spaces.details}; ${spaces.live} live, ${spaces.coming} to come, at ${seconds(spaces.at)}` : "no news"}${spacesPlayer ? `; player ${spacesPlayer.state}${spacesPlayer.error ? ` (${spacesPlayer.error})` : ""} at ${seconds(spacesPlayer.at)}${spacesPlayer.recovered.length ? `, going again after ${spacesPlayer.recovered.join("; ")}` : ""}${spacesPlayer.chat ? `, chat ${spacesPlayer.chat}, ${spacesPlayer.captions} captions${spacesPlayer.messages.length ? `, messages ${spacesPlayer.messages.join("; ")}` : ""}` : ""}` : ""}`,
             `Waiting for X: ${pending.size ? "" : "nothing"}`,
             ...waitingFor(0).map(r => `  ${r.method} ${r.url} for ${r.seconds} s`),
             `Still asked at api.x.com and answered: ${[...oldApi].map(([path, v]) => `${path} ×${v.count}`).join(", ") || "nothing"}`,

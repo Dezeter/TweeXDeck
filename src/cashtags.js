@@ -17,7 +17,7 @@
     const QUERY_PATH = `/i/api/graphql/${QUERY_ID}/SmartTagAttachmentQuery`;
     const variables = restId => ({ assetSymbol: restId, timeframe: "1D", candleSize: "5m" });
     const FRESH_FOR = 60000;
-    const LOCALE = navigator.language || "en";
+    const LOCALE = OTD.LOCALE;
 
     const data = () => window.OTDcashtagData;
     const asked = new Map();

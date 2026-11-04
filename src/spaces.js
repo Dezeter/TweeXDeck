@@ -7,7 +7,8 @@
 // - Each one's title, host, speakers, listeners and times from AudioSpaceById, by the id and features of x.com's
 //   main.js when it has them, the ones known when this was written otherwise.
 // "Listen" plays a live one right here, one at a time, in a player on top of the column it was started from: its
-// stream from live_video_stream/status, played with hls.js (files/hls/, Apache 2.0) or the browser's own HLS. Live
+// stream from live_video_stream/status, played with hls.js (files/hls/, Apache 2.0) or the browser's own HLS. The
+// player shows who's on stage, and from the Space's chat, as x.com's listeners get it, its captions and who speaks. Live
 // ones are asked for every minute while the page is in view; nothing is asked while there's no Spaces column.
 // Loaded by injection.js after for-you.js.
 (() => {
@@ -34,6 +35,7 @@
             pause: "Пауза", play: "Слушать", close: "Закрыть", volume: "Громкость", again: "Ещё раз",
             connecting: "Подключаемся…", playing: "В эфире", paused: "На паузе", ended: "Спейс закончился",
             cantPlay: status => `Не удалось подключиться (${status})`, noBrowser: "браузер не играет такой поток",
+            speaking: name => `Говорит ${name}`, captions: "Субтитры", stage: "На сцене", wide: "Субтитры во всю ширину колонки",
         },
         en: {
             live: "Live", coming: "Coming up", liveBadge: "Live", comingBadge: "Scheduled",
@@ -54,6 +56,7 @@
             pause: "Pause", play: "Listen", close: "Close", volume: "Volume", again: "Try again",
             connecting: "Connecting…", playing: "Live", paused: "Paused", ended: "The Space has ended",
             cantPlay: status => `Couldn't connect (${status})`, noBrowser: "the browser doesn't play this stream",
+            speaking: name => `${name} is speaking`, captions: "Captions", stage: "On stage", wide: "Captions across the column",
         },
     };
     const LANG = LABELS[OTD.UI_LANG] ? OTD.UI_LANG : "en";
@@ -530,7 +533,8 @@
     // --- listening --------------------------------------------------------------------------------------------
     // the Space playing, the column it was started from and its account, and how it goes: connecting, playing,
     // paused, ended, failed
-    const player = { space: null, column: "", user: "", state: "", error: "", chatToken: "", audio: null, hls: null, token: null, pausedAt: 0 };
+    // recovered: the media errors hls.js got the media going again after
+    const player = { space: null, column: "", user: "", state: "", error: "", chatToken: "", audio: null, hls: null, token: null, pausedAt: 0, recovered: [], recoveredAt: -Infinity };
     const VOLUME_STORAGE = "OTDspacesVolume";
     const volume = () => {
         const value = Number(localStorage[VOLUME_STORAGE]);
@@ -599,12 +603,13 @@
         const audio = audioElement();
         audio.volume = volume();
         const token = {};
-        Object.assign(player, { space, column: column.key, user: column.user, state: "connecting", error: "", chatToken: "", token });
+        Object.assign(player, { space, column: column.key, user: column.user, state: "connecting", error: "", chatToken: "", token, recovered: [], recoveredAt: -Infinity });
         changed();
         try {
             const stream = await streamOf(space, column.user);
             if(player.token !== token) return;
             player.chatToken = stream.chatToken;
+            openChat(stream.chatToken, token);
             let Hls = null;
             try {
                 Hls = await loadHls();
@@ -615,7 +620,18 @@
             if(Hls?.isSupported()) {
                 const hls = player.hls = new Hls({ liveDurationInfinity: true });
                 hls.on(Hls.Events.ERROR, (event, data) => {
-                    if(data?.fatal && player.token === token) fail(data.response?.code ? `HTTP ${data.response.code}` : String(data.details || data.type));
+                    if(!data?.fatal || player.token !== token) return;
+                    const what = `${data.details || data.type}${data.error?.message ? `: ${data.error.message}` : ""}`.slice(0, 100);
+                    // the media choking now and then, as hls.js's own docs have it: it gets the media going again, once
+                    // in a while; again soon after, the player says so
+                    if(data.type === Hls.ErrorTypes.MEDIA_ERROR && performance.now() - player.recoveredAt > 10000) {
+                        player.recoveredAt = performance.now();
+                        player.recovered.push(what);
+                        report();
+                        hls.recoverMediaError();
+                        return;
+                    }
+                    fail(data.response?.code ? `HTTP ${data.response.code}` : what);
                 });
                 hls.loadSource(stream.url);
                 hls.attachMedia(audio);
@@ -651,6 +667,7 @@
     // the stream let go of, the player kept to say what happened
     function release() {
         player.token = null;
+        closeChat();
         player.hls?.destroy();
         player.hls = null;
         if(player.audio) {
@@ -691,7 +708,141 @@
     function changed() {
         render();
         mediaSession();
-        document.dispatchEvent(new CustomEvent("otd-diagnostic", { detail: JSON.stringify({ kind: "spaces-player", state: player.state || "stopped", error: player.error }) }));
+        report();
+    }
+    // for the load watchdog: how the player goes, and its chat: whether it's open, how many captions came, and the
+    // kinds of messages it had, by their fields' names, without what's in them
+    function report() {
+        document.dispatchEvent(new CustomEvent("otd-diagnostic", { detail: JSON.stringify({
+            kind: "spaces-player", state: player.state || "stopped", error: player.error, recovered: player.recovered.slice(-3),
+            chat: chat.status, captions: chat.captions, messages: [...chat.shapes.keys()],
+        }) }));
+    }
+
+    // --- the Space's chat: who speaks, what they say -----------------------------------------------------------
+    // As x.com's listeners have it: the stream's chat token for the chat's address and a token of its own
+    // (proxsee.pscp.tv's accessChatPublic), a WebSocket there (chatapi/v1/chatnow) told that token and the room. While
+    // the Space has captions on, they come in it with who says them: { body, username, final }.
+    const CAPTIONS_STORAGE = "OTDspacesCaptions";
+    // "1" while the captions are across the whole column, with what was said before
+    const WIDE_STORAGE = "OTDspacesCaptionsWide";
+    const captionsWide = () => localStorage[WIDE_STORAGE] === "1";
+    // someone speaks as long as their captions come, and a little after; a caption stays a while after the last
+    const SPEAKING_FOR = 3000, CAPTION_FOR = 8000;
+    // lines: what was said, by whom, the last one as it's said
+    const chat = { socket: null, token: null, status: "", captions: 0, shapes: new Map(), speaker: null, caption: null, lines: [], timer: 0, retries: 0 };
+    const captionsOn = () => localStorage[CAPTIONS_STORAGE] !== "0";
+    const json = text => {
+        if(typeof text !== "string") return text && typeof text === "object" ? text : null;
+        try {
+            return JSON.parse(text);
+        } catch(e) {
+            return null;
+        }
+    };
+    async function openChat(chatToken, token) {
+        closeChat();
+        Object.assign(chat, { token, status: chatToken ? "connecting" : "no chat token", captions: 0, shapes: new Map(), speaker: null, caption: null, lines: [], retries: 0 });
+        report();
+        if(!chatToken) return;
+        try {
+            const res = await fetch("https://proxsee.pscp.tv/api/v2/accessChatPublic", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chat_token: chatToken }) });
+            if(!res.ok) throw failure(`HTTP ${res.status}`, res.status);
+            const access = await res.json();
+            if(chat.token !== token) return;
+            const endpoint = new URL(access?.endpoint);
+            if(endpoint.protocol !== "https:" || !access.access_token) throw failure("no chat address");
+            connect(`wss://${endpoint.host}/chatapi/v1/chatnow`, String(access.access_token), String(access.room_id || player.space?.id || ""), token);
+        } catch(e) {
+            if(chat.token !== token) return;
+            chat.status = describe(e);
+            report();
+        }
+    }
+    function connect(url, accessToken, room, token) {
+        const socket = chat.socket = new WebSocket(url);
+        socket.addEventListener("open", () => {
+            if(chat.socket !== socket) return;
+            socket.send(JSON.stringify({ payload: JSON.stringify({ access_token: accessToken }), kind: 3 }));
+            socket.send(JSON.stringify({ payload: JSON.stringify({ body: JSON.stringify({ room }), kind: 1 }), kind: 2 }));
+            chat.status = "open";
+            chat.retries = 0;
+            report();
+        });
+        socket.addEventListener("message", e => {
+            if(chat.socket === socket) heardChat(e.data);
+        });
+        socket.addEventListener("close", () => {
+            if(chat.socket !== socket || chat.token !== token) return;
+            chat.socket = null;
+            // a few more tries while the Space plays, as a dropped connection comes back
+            if(chat.retries++ < 5) {
+                chat.status = "reconnecting";
+                setTimeout(() => chat.token === token && !chat.socket && connect(url, accessToken, room, token), 5000 * chat.retries);
+            } else {
+                chat.status = "closed";
+            }
+            report();
+        });
+        if(!chat.timer) chat.timer = setInterval(speakingNow, 1000);
+    }
+    function closeChat() {
+        const socket = chat.socket;
+        Object.assign(chat, { socket: null, token: null, speaker: null, caption: null, lines: [] });
+        if(chat.status && chat.status !== "no chat token") chat.status = "closed";
+        try {
+            socket?.close();
+        } catch(e) {}
+        clearInterval(chat.timer);
+        chat.timer = 0;
+    }
+    function heardChat(data) {
+        const message = json(data);
+        const payload = json(message?.payload);
+        const body = json(payload?.body);
+        // what kinds of messages come, for the diagnostics: the kind, the body's type and its fields' names
+        const shape = `${message?.kind ?? "?"}:${body?.type ?? "-"}:${Object.keys(body || payload || {}).sort().join(",")}`.slice(0, 120);
+        if(!chat.shapes.has(shape) && chat.shapes.size < 12) {
+            chat.shapes.set(shape, true);
+            report();
+        }
+        if(message?.kind !== 1 || !body || typeof body.body !== "string" || typeof body.final !== "boolean" || !body.username) return;
+        chat.captions++;
+        const username = String(body.username);
+        const known = stage().find(p => p.screenName && p.screenName.toLowerCase() === username.toLowerCase());
+        const name = known?.name || String(body.display_name || body.displayName || payload?.sender?.display_name || username);
+        const now = performance.now();
+        const text = body.body.trim();
+        chat.speaker = { username: username.toLowerCase(), name, at: now };
+        if(!text) return drawSpeaking();
+        chat.caption = { text, name, at: now };
+        // a caption comes again and again as it's said, the whole of it so far, the last time final
+        const last = chat.lines.at(-1);
+        if(last && last.username === chat.speaker.username && !last.final) Object.assign(last, { name, text, final: body.final });
+        else chat.lines.push({ username: chat.speaker.username, name, text, final: body.final });
+        if(chat.lines.length > 60) chat.lines.splice(0, chat.lines.length - 60);
+        drawSpeaking();
+    }
+    // the speaker and the caption, gone when they're old
+    function speakingNow() {
+        const now = performance.now();
+        let gone = false;
+        if(chat.speaker && now - chat.speaker.at > SPEAKING_FOR) {
+            chat.speaker = null;
+            gone = true;
+        }
+        if(chat.caption && now - chat.caption.at > CAPTION_FOR) {
+            chat.caption = null;
+            gone = true;
+        }
+        if(gone) drawSpeaking();
+    }
+    // who's on stage: the host, the co-hosts, the speakers, as AudioSpaceById had them last
+    function stage() {
+        const space = player.space;
+        if(!space) return [];
+        const all = [space.host, ...space.admins, ...space.speakers].filter(Boolean);
+        return all.filter((p, i) => p.id && all.findIndex(q => q.id === p.id) === i);
     }
     function mediaSession() {
         const session = navigator.mediaSession;
@@ -717,10 +868,11 @@
     }
 
     const ICONS = {
-        play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></svg>',
-        pause: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor"/></svg>',
-        close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
-        volume: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+        play: '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M8.5 5.2v13.6a.8.8 0 0 0 1.2.7l10.6-6.8a.8.8 0 0 0 0-1.4L9.7 4.5a.8.8 0 0 0-1.2.7z" fill="currentColor"/></svg>',
+        pause: '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="6" y="5" width="4.2" height="14" rx="1.2" fill="currentColor"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.2" fill="currentColor"/></svg>',
+        close: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+        wide: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+        volume: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
     };
     function iconButton(className, label, icon) {
         const button = el("button", className);
@@ -756,18 +908,37 @@
             const closeButton = iconButton("otd-space-player-close", T.close, ICONS.close);
             closeButton.addEventListener("click", () => stop());
             top.append(toggleButton, text, closeButton);
+            const people = el("div", "otd-space-player-stage");
+            people.setAttribute("aria-label", T.stage);
+            const said = el("div", "otd-space-player-caption");
+            said.setAttribute("aria-live", "polite");
+            said.addEventListener("click", () => wideCaptions());
             const bottom = el("div", "otd-space-player-row otd-space-player-bottom");
             const volumeIcon = el("span", "otd-space-player-volume-icon");
             volumeIcon.innerHTML = ICONS.volume;
             const range = el("input", "otd-space-player-volume");
             Object.assign(range, { type: "range", min: "0", max: "1", step: "0.05", value: String(volume()) });
             range.setAttribute("aria-label", T.volume);
+            // how much of the track is filled, for Chrome's; Firefox fills its own
+            const fill = () => range.style.setProperty("--otd-volume", `${Number(range.value) * 100}%`);
+            fill();
             range.addEventListener("input", () => {
                 OTD.setValue(VOLUME_STORAGE, range.value === "1" ? "" : range.value);
                 if(player.audio) player.audio.volume = Number(range.value);
+                fill();
             });
-            bottom.append(volumeIcon, range, link("", "otd-space-player-open", T.open));
-            box.append(top, bottom);
+            const cc = el("button", "otd-space-player-cc", "CC");
+            cc.type = "button";
+            cc.title = T.captions;
+            cc.setAttribute("aria-label", T.captions);
+            cc.addEventListener("click", () => {
+                OTD.setValue(CAPTIONS_STORAGE, captionsOn() ? "0" : "");
+                drawSpeaking();
+            });
+            const wide = iconButton("otd-space-player-wide", T.wide, ICONS.wide);
+            wide.addEventListener("click", () => wideCaptions());
+            bottom.append(volumeIcon, range, cc, wide, link("", "otd-space-player-open", T.open));
+            box.append(top, people, said, bottom);
             scroller.prepend(box);
         }
         const space = player.space, state = player.state;
@@ -775,9 +946,7 @@
         box.dataset.state = state;
         box.setAttribute("aria-label", space.title || T.untitled);
         box.querySelector(".otd-space-player-title").textContent = space.title || `${T.untitled}${space.host?.name ? ` · ${space.host.name}` : ""}`;
-        const said = state === "failed" ? T.cantPlay(player.error) : state === "ended" ? T.ended : state === "paused" ? T.paused
-            : state === "connecting" ? T.connecting : T.playing;
-        box.querySelector(".otd-space-player-state").textContent = space.host?.name && state === "playing" ? `${said} · ${space.host.name}` : said;
+        drawSpeaking(box);
         const toggleButton = box.querySelector(".otd-space-player-toggle");
         const again = state === "ended" || state === "failed";
         const playing = state === "playing" || state === "connecting";
@@ -790,6 +959,68 @@
         // a Space that ended isn't there to listen to again
         toggleButton.hidden = state === "ended";
         box.querySelector(".otd-space-player-open").href = spaceUrl(space.id);
+    }
+    // what changes as people speak: the state's line, the faces on stage, the caption
+    function drawSpeaking(box = document.querySelector(".otd-space-player")) {
+        if(!box || !player.space) return;
+        const space = player.space, state = player.state, speaker = state === "playing" ? chat.speaker : null;
+        const said = state === "failed" ? T.cantPlay(player.error) : state === "ended" ? T.ended : state === "paused" ? T.paused
+            : state === "connecting" ? T.connecting : speaker ? T.speaking(speaker.name) : space.host?.name ? `${T.playing} · ${space.host.name}` : T.playing;
+        const line = box.querySelector(".otd-space-player-state");
+        if(line.textContent !== said) line.textContent = said;
+        box.classList.toggle("is-speaking", !!speaker);
+
+        // the faces: drawn again when who's on stage changes, the one speaking marked
+        const people = box.querySelector(".otd-space-player-stage");
+        const onStage = state === "ended" ? [] : stage();
+        const who = onStage.map(p => `${p.id}:${p.avatar}:${p.name}`).join("|");
+        if(people.dataset.who !== who) {
+            people.dataset.who = who;
+            people.replaceChildren(...onStage.slice(0, 10).map(p => {
+                const face = el("span", "otd-space-player-face");
+                face.dataset.username = p.screenName.toLowerCase();
+                face.title = p.screenName ? `${p.name} @${p.screenName}` : p.name;
+                face.append(avatar(p.avatar));
+                return face;
+            }));
+            if(onStage.length > 10) people.append(el("span", "otd-space-player-more", `+${onStage.length - 10}`));
+        }
+        people.hidden = !onStage.length;
+        for(const face of people.querySelectorAll(".otd-space-player-face")) face.classList.toggle("is-speaking", !!speaker && face.dataset.username === speaker.username);
+
+        // the captions: the last one under the faces, its end when it's long, for a while after it's said; or
+        // across the column, what was said before over it, kept to scroll back in
+        const caption = box.querySelector(".otd-space-player-caption");
+        const wide = captionsWide();
+        box.classList.toggle("is-wide", wide);
+        const lines = !captionsOn() || (state !== "playing" && !(wide && state === "paused")) ? []
+            : wide ? chat.lines.slice(-40) : chat.caption && chat.lines.length ? chat.lines.slice(-1) : [];
+        const shownLines = lines.map(line => ({ name: line.name, text: wide || line.text.length <= 160 ? line.text : `…${line.text.slice(-160)}` }));
+        const drawnNow = JSON.stringify([wide, shownLines]);
+        if(caption.otdDrawn !== drawnNow) {
+            caption.otdDrawn = drawnNow;
+            // kept at its end as new ones come, unless scrolled back
+            const atEnd = caption.scrollTop + caption.clientHeight >= caption.scrollHeight - 4;
+            caption.replaceChildren(...shownLines.map(line => {
+                const p = el("p", "otd-space-player-line");
+                p.append(el("b", "", `${line.name}:`), document.createTextNode(` ${line.text}`));
+                return p;
+            }));
+            if(atEnd || !wide) caption.scrollTop = caption.scrollHeight;
+        }
+        caption.hidden = !lines.length;
+        caption.title = wide ? "" : T.wide;
+        const cc = box.querySelector(".otd-space-player-cc");
+        cc.setAttribute("aria-pressed", String(captionsOn()));
+        const wideButton = box.querySelector(".otd-space-player-wide");
+        wideButton.setAttribute("aria-pressed", String(wide));
+        // the buttons only once the Space has had captions
+        cc.hidden = !chat.captions;
+        wideButton.hidden = !chat.captions || !captionsOn();
+    }
+    function wideCaptions() {
+        OTD.setValue(WIDE_STORAGE, captionsWide() ? "" : "1");
+        drawSpeaking();
     }
 
     // every 10 s what's due, while the page is in view; a new column at once
@@ -840,13 +1071,15 @@
         .otd-space-faces > img:first-child { margin-left: 0; }
         .otd-spaces .otd-space-yours { margin: 8px 0 0; font-size: 13px; color: var(--otd-text-2, #657786); }
         .otd-space-actions { margin: 10px 0 0; }
-        .otd-spaces .otd-space-listen { display: inline-block; height: auto; margin: 0; padding: 6px 14px; border: 0 !important; box-shadow: none !important; border-radius: 999px; background: var(--otd-accent-fill, #1d9bf0); color: #fff; font-family: inherit; font-size: 13px; font-weight: 700; line-height: 1.2; text-decoration: none; cursor: pointer; }
-        .otd-spaces .otd-space-listen:hover { filter: brightness(1.1); text-decoration: none; }
-        .otd-spaces .is-coming .otd-space-listen, .otd-spaces .otd-space-listen.is-current { background: var(--otd-ghost, rgba(0, 0, 0, .05)); color: var(--otd-text, #14171a); }
-        html.dark .otd-spaces .is-coming .otd-space-listen, html.dark .otd-spaces .otd-space-listen.is-current { color: var(--otd-text, #fff); }
+        /* the buttons here over TweetDeck's own of every button, its dark theme's light blue as the pointer's over
+           one and its ring as it's pressed or has the focus: :root to come first in every state */
+        :root .otd-spaces .otd-space-listen { display: inline-block; height: auto; margin: 0; padding: 6px 14px; border: 0 !important; box-shadow: none !important; border-radius: 999px; background: var(--otd-accent-fill, #1d9bf0); color: #fff; font-family: inherit; font-size: 13px; font-weight: 700; line-height: 1.2; text-decoration: none; cursor: pointer; }
+        :root .otd-spaces .otd-space-listen:hover { filter: brightness(1.1); text-decoration: none; }
+        :root .otd-spaces .is-coming .otd-space-listen, :root .otd-spaces .otd-space-listen.is-current { background: var(--otd-ghost, rgba(0, 0, 0, .05)); color: var(--otd-text, #14171a); }
+        :root.dark .otd-spaces .is-coming .otd-space-listen, :root.dark .otd-spaces .otd-space-listen.is-current { color: var(--otd-text, #fff); }
         .otd-spaces .otd-spaces-checked { margin: 10px 4px 0; font-size: 12px; color: var(--otd-text-3, #657786); }
-        .otd-spaces .otd-spaces-refresh { padding: 0; border: 0; background: none; color: var(--otd-accent, #1d9bf0); font: inherit; cursor: pointer; }
-        .otd-spaces .otd-spaces-refresh:hover { text-decoration: underline; }
+        :root .otd-spaces .otd-spaces-refresh { height: auto; padding: 0; border: 0 !important; box-shadow: none !important; background: none; color: var(--otd-accent, #1d9bf0); font: inherit; cursor: pointer; }
+        :root .otd-spaces .otd-spaces-refresh:hover { text-decoration: underline; }
 
         .otd-space-player { --otd-live: #d0304f; position: sticky; top: 0; z-index: 2; margin: 0; padding: 10px 12px; border-bottom: 1px solid var(--otd-line, rgba(0, 0, 0, .07));
             background: var(--otd-raised-solid, #f3f4f5); color: var(--otd-text, #14171a); font-size: 13px; line-height: 1.3; text-shadow: none; }
@@ -859,17 +1092,43 @@
         .otd-space-player[data-state="playing"] .otd-space-player-state { color: var(--otd-live); }
         .otd-space-player[data-state="failed"] .otd-space-player-state { color: var(--otd-live); }
         /* TweetDeck's own button frames, dark ones its accent's, aren't these */
-        .otd-space-player button { display: inline-flex; flex: none; align-items: center; justify-content: center; padding: 0; border: 0 !important; border-radius: 50%; box-shadow: none !important; cursor: pointer; }
-        .otd-space-player button[hidden] { display: none; }
-        .otd-space-player svg { width: 18px; height: 18px; }
-        .otd-space-player .otd-space-player-toggle { width: 36px; height: 36px; background: var(--otd-accent-fill, #1d9bf0); color: #fff; }
-        .otd-space-player .otd-space-player-toggle:hover { filter: brightness(1.1); }
-        .otd-space-player .otd-space-player-close { width: 30px; height: 30px; background: transparent; color: var(--otd-text-2, #657786); }
-        .otd-space-player .otd-space-player-close:hover { background: var(--otd-ghost-hover, rgba(0, 0, 0, .08)); color: var(--otd-text, #14171a); }
-        html.dark .otd-space-player .otd-space-player-close:hover { color: var(--otd-text, #fff); }
+        :root .otd-space-player button { display: inline-flex; flex: none; align-items: center; justify-content: center; padding: 0; border: 0 !important; border-radius: 50%; box-shadow: none !important; cursor: pointer; }
+        .otd-space-player button::-moz-focus-inner { padding: 0; border: 0; }
+        :root .otd-space-player button[hidden] { display: none; }
+        .otd-space-player svg { display: block; flex: none; }
+        :root .otd-space-player .otd-space-player-toggle { width: 38px; height: 38px; margin: 0; background: var(--otd-accent-fill, #1d9bf0); color: #fff; line-height: 0; }
+        :root .otd-space-player .otd-space-player-toggle:hover { filter: brightness(1.1); }
+        :root .otd-space-player .otd-space-player-close { width: 30px; height: 30px; margin: 0; background: transparent; color: var(--otd-text-2, #657786); }
+        :root .otd-space-player .otd-space-player-close:hover { background: var(--otd-ghost-hover, rgba(0, 0, 0, .08)); color: var(--otd-text, #14171a); }
+        :root.dark .otd-space-player .otd-space-player-close:hover { color: var(--otd-text, #fff); }
         .otd-space-player-volume-icon { display: inline-flex; flex: none; color: var(--otd-text-2, #657786); }
-        .otd-space-player-volume-icon svg { width: 16px; height: 16px; }
-        .otd-space-player input.otd-space-player-volume { flex: 1; min-width: 40px; max-width: 140px; height: 16px; margin: 0; accent-color: var(--otd-accent-fill, #1d9bf0); }
+        /* the volume's track and handle drawn here, the same in Chrome and Firefox */
+        .otd-space-player input.otd-space-player-volume { --otd-volume: 100%; flex: 1; min-width: 40px; max-width: 140px; height: 16px; margin: 0; padding: 0; border: 0; background: transparent; -webkit-appearance: none; appearance: none; cursor: pointer; }
+        .otd-space-player input.otd-space-player-volume::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--otd-accent-fill, #1d9bf0) var(--otd-volume), var(--otd-ghost-hover, rgba(0, 0, 0, .12)) var(--otd-volume)); }
+        .otd-space-player input.otd-space-player-volume::-webkit-slider-thumb { width: 12px; height: 12px; margin-top: -4px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .2); -webkit-appearance: none; appearance: none; }
+        .otd-space-player input.otd-space-player-volume::-moz-range-track { height: 4px; border: 0; border-radius: 2px; background: var(--otd-ghost-hover, rgba(0, 0, 0, .12)); }
+        .otd-space-player input.otd-space-player-volume::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--otd-accent-fill, #1d9bf0); }
+        .otd-space-player input.otd-space-player-volume::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .2); }
+        :root .otd-space-player .otd-space-player-cc { height: 18px; margin: 0; padding: 0 5px; border-radius: 4px; background: transparent; color: var(--otd-text-2, #657786); font-family: inherit; font-size: 10px; font-weight: 700; line-height: 18px; letter-spacing: .04em; box-shadow: inset 0 0 0 1.5px currentColor !important; }
+        :root .otd-space-player .otd-space-player-cc[aria-pressed="true"] { color: var(--otd-text, #14171a); }
+        :root.dark .otd-space-player .otd-space-player-cc[aria-pressed="true"] { color: var(--otd-text, #fff); }
+        .otd-space-player-stage { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 8px 0 0 48px; }
+        .otd-space-player-stage[hidden], .otd-space-player-caption[hidden] { display: none; }
+        .otd-space-player-face { position: relative; display: inline-flex; width: 26px; height: 26px; border-radius: 50%; box-shadow: 0 0 0 2px transparent; transition: box-shadow .15s; }
+        .otd-space-player-face > img { width: 26px; height: 26px; border-radius: 50%; background: var(--otd-ghost, rgba(0, 0, 0, .05)); object-fit: cover; }
+        .otd-space-player-face.is-speaking { box-shadow: 0 0 0 2px var(--otd-raised-solid, #f3f4f5), 0 0 0 4px var(--otd-accent-fill, #1d9bf0); }
+        .otd-space-player-more { color: var(--otd-text-2, #657786); font-size: 12px; }
+        .otd-space-player.is-speaking .otd-space-player-state { color: var(--otd-accent, #1d9bf0); }
+        .otd-space-player-caption { margin: 8px 0 0 48px; overflow-wrap: anywhere; color: var(--otd-text, #14171a); font-size: 13px; line-height: 1.35; cursor: zoom-in; }
+        html.dark .otd-space-player-caption { color: var(--otd-text, #fff); }
+        .otd-space-player-caption > p.otd-space-player-line { margin: 0; }
+        .otd-space-player-line > b { margin-right: 2px; font-weight: 700; }
+        /* across the column, edge to edge, what was said before over the last one */
+        .otd-space-player.is-wide .otd-space-player-caption { max-height: min(45vh, 360px); margin: 10px -12px 0; padding: 8px 12px; overflow-y: auto; border-top: 1px solid var(--otd-line, rgba(0, 0, 0, .07)); border-bottom: 1px solid var(--otd-line, rgba(0, 0, 0, .07)); background: var(--otd-panel, #fff); font-size: 14px; cursor: zoom-out; overscroll-behavior: contain; }
+        .otd-space-player.is-wide .otd-space-player-line + .otd-space-player-line { margin-top: 6px; }
+        :root .otd-space-player .otd-space-player-wide { width: 24px; height: 24px; margin: 0; border-radius: 4px; background: transparent; color: var(--otd-text-2, #657786); }
+        :root .otd-space-player .otd-space-player-wide:hover { background: var(--otd-ghost-hover, rgba(0, 0, 0, .08)); }
+        :root .otd-space-player .otd-space-player-wide[aria-pressed="true"] { color: var(--otd-accent, #1d9bf0); }
         .otd-space-player a.otd-space-player-open { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--otd-accent, #1d9bf0); font-size: 12px; text-decoration: none; }
         .otd-space-player a.otd-space-player-open:hover { text-decoration: underline; }
     `);

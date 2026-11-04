@@ -6,7 +6,7 @@
     const util = window.TD?.util;
     if(!util?.prettyDate) return;
 
-    const locale = navigator.language || "en";
+    const locale = OTD.LOCALE;
     const today = new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" });
     const thisYear = new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
     // short: the time sits next to the author's name

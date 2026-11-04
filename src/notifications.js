@@ -63,7 +63,8 @@ async function checkForUpdate() {
     if(minVersionCheck(manifest.version, latest)) return;
     if(localStorage.OTDupdateNotified === latest || document.querySelector('.otd-notification-modal')) return;
 
-    let ru = (navigator.language || '').startsWith('ru');
+    // the language picked in TweeXDeck's settings (OTDuiLang), the browser's without it
+    let ru = (['ru', 'en'].includes(localStorage.OTDuiLang) ? localStorage.OTDuiLang : navigator.language || '').startsWith('ru');
     let modal = createModal(`<div class="otd-notification otd-notification-info"><div class="otd-notification-content"></div></div>`, 'otd-notification-modal', () => {
         localStorage.OTDupdateNotified = latest;
     });
