@@ -169,7 +169,7 @@
         else if(entry.kind === "theme") theme = String(entry.text || "");
         else if(entry.kind === "spaces-player") spacesPlayer = { state: String(entry.state || ""), error: String(entry.error || "").slice(0, 80), at: Date.now(),
             chat: String(entry.chat || "").slice(0, 80), captionsAsked: String(entry.captionsAsked || "").slice(0, 80), captions: Number(entry.captions) || 0,
-            recovered: Array.isArray(entry.recovered) ? entry.recovered.slice(0, 3).map(r => String(r).slice(0, 100)) : [],
+            recovered: Array.isArray(entry.recovered) ? entry.recovered.slice(0, 3).map(r => String(r).slice(0, 160)) : [],
             // the stream's ID3 metadata by kind, and what X tells of one on stage: fields' names and kinds only
             metadata: Array.isArray(entry.metadata) ? entry.metadata.slice(0, 12).map(m => String(m).slice(0, 220)) : [],
             participant: String(entry.participant || "").slice(0, 600),

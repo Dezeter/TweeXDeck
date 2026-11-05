@@ -158,7 +158,7 @@ async function open(page, { user = "1", main = MAIN, answer = {}, clock = "fixed
             if(!this.__watched) {
                 this.__watched = true;
                 for(const name of ["loadedmetadata", "canplay", "playing", "waiting", "stalled", "pause", "seeking", "seeked", "ended", "error", "emptied"]) {
-                    this.addEventListener(name, () => window.__events.push(`${name}@${this.currentTime.toFixed(2)}`));
+                    this.addEventListener(name, () => window.__events.push(`${name}@${this.currentTime.toFixed(2)}${name === "error" && this.error ? ` (${this.error.code} ${this.error.message})` : ""}`));
                 }
             }
             return play.call(this).catch(e => {
@@ -757,7 +757,23 @@ test("the media choking, as Firefox's does now and then: hls.js gets it going ag
     await explained(page, expect.poll(async () => (await audio(page)).time - before, { timeout: 15000 }).toBeGreaterThan(1));
     expect((await audio(page)).paused).toBe(false);
     expect((await playerShown(page)).state).toBe("В эфире · Hana");
-    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).recovered)).toEqual(["bufferAppendError: not usable"]);
+    expect((await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).recovered))[0]).toBe("bufferAppendError: not usable");
+});
+
+test("the media choking three times in a row is got going again each time; a fourth, and the player says it couldn't", async ({ page }) => {
+    await open(page);
+    await expect.poll(() => cards(page)).toBe(4);
+    await keptHls(page);
+    await listenButton(page, "1LiveAAAAAAAA").click();
+    await plays(page, 0.3);
+    const choke = n => page.evaluate(n => window.__hls.trigger(Hls.Events.ERROR, { type: Hls.ErrorTypes.MEDIA_ERROR, details: Hls.ErrorDetails.BUFFER_APPEND_ERROR, fatal: true, error: new Error(`not usable ${n}`) }), n);
+    for(const n of [1, 2, 3]) {
+        await choke(n);
+        await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).recovered.length)).toBe(n);
+    }
+    expect((await playerShown(page)).state).not.toMatch(/Не удалось/);
+    await choke(4);
+    await expect.poll(async () => (await playerShown(page)).state).toBe("Не удалось подключиться (bufferAppendError: not usable 4)");
 });
 
 test("paused by the listener, a Space stays paused after the media chokes", async ({ page }) => {
