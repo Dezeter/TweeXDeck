@@ -757,7 +757,8 @@ test("the media choking, as Firefox's does now and then: hls.js gets it going ag
     await explained(page, expect.poll(async () => (await audio(page)).time - before, { timeout: 15000 }).toBeGreaterThan(1));
     expect((await audio(page)).paused).toBe(false);
     expect((await playerShown(page)).state).toBe("В эфире · Hana");
-    expect((await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).recovered))[0]).toBe("bufferAppendError: not usable");
+    // with what the audio element itself said, if it had given up already: Firefox's without a sound device
+    expect((await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).recovered))[0]).toMatch(/^bufferAppendError( \[media \d+ [^\]]*\])?: not usable$/);
 });
 
 test("the media choking three times in a row is got going again each time; a fourth, and the player says it couldn't", async ({ page }) => {
@@ -785,7 +786,7 @@ test("paused by the listener, a Space stays paused after the media chokes", asyn
     await page.click(".otd-space-player-toggle");
     await expect.poll(async () => (await playerShown(page)).state).toBe("На паузе");
     await page.evaluate(() => window.__hls.trigger(Hls.Events.ERROR, { type: Hls.ErrorTypes.MEDIA_ERROR, details: Hls.ErrorDetails.BUFFER_APPEND_ERROR, fatal: true, error: new Error("not usable") }));
-    await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).recovered)).toEqual(["bufferAppendError: not usable"]);
+    await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).recovered.at(-1))).toMatch(/^bufferAppendError( \[media \d+ [^\]]*\])?: not usable$/);
     await page.waitForTimeout(1500);
     expect((await audio(page)).paused).toBe(true);
     expect((await playerShown(page)).state).toBe("На паузе");
