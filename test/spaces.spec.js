@@ -742,6 +742,42 @@ test("who's on stage and who speaks by the stream itself: HydraParticipants and 
     expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).hydra)).toMatch(/^3 on stage \(indexes 0,1,2\), levels ×\d+ of 3 each, 0…0\.9$/);
 });
 
+test("the media choking, as Firefox's does now and then: hls.js gets it going again and it plays on, as it did", async ({ page }) => {
+    await open(page);
+    await expect.poll(() => cards(page)).toBe(4);
+    await keptHls(page);
+    await listenButton(page, "1LiveAAAAAAAA").click();
+    await plays(page, 0.3);
+    // what Firefox's hls.js says of a chunk it couldn't append: the media let go of and taken back, the audio element
+    // paused by that without a word, as a browser has it
+    const before = await page.evaluate(() => {
+        window.__hls.trigger(Hls.Events.ERROR, { type: Hls.ErrorTypes.MEDIA_ERROR, details: Hls.ErrorDetails.BUFFER_APPEND_ERROR, fatal: true, error: new Error("not usable") });
+        return window.__audio.currentTime;
+    });
+    await explained(page, expect.poll(async () => (await audio(page)).time - before, { timeout: 15000 }).toBeGreaterThan(1));
+    expect((await audio(page)).paused).toBe(false);
+    expect((await playerShown(page)).state).toBe("В эфире · Hana");
+    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).recovered)).toEqual(["bufferAppendError: not usable"]);
+});
+
+test("paused by the listener, a Space stays paused after the media chokes", async ({ page }) => {
+    await open(page);
+    await expect.poll(() => cards(page)).toBe(4);
+    await keptHls(page);
+    await listenButton(page, "1LiveAAAAAAAA").click();
+    await plays(page, 0.3);
+    await page.click(".otd-space-player-toggle");
+    await expect.poll(async () => (await playerShown(page)).state).toBe("На паузе");
+    await page.evaluate(() => window.__hls.trigger(Hls.Events.ERROR, { type: Hls.ErrorTypes.MEDIA_ERROR, details: Hls.ErrorDetails.BUFFER_APPEND_ERROR, fatal: true, error: new Error("not usable") }));
+    await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).recovered)).toEqual(["bufferAppendError: not usable"]);
+    await page.waitForTimeout(1500);
+    expect((await audio(page)).paused).toBe(true);
+    expect((await playerShown(page)).state).toBe("На паузе");
+    // its ▶ goes on
+    await page.click(".otd-space-player-toggle");
+    await expect.poll(async () => (await audio(page)).paused).toBe(false);
+});
+
 test("levels by participants' indexes where there aren't as many as on stage", async ({ page }) => {
     await open(page);
     await expect.poll(() => cards(page)).toBe(4);

@@ -638,6 +638,11 @@
                         player.recoveredAt = performance.now();
                         player.recovered.push(what);
                         report();
+                        // the media taken back pauses the audio without a word, as a browser loading it does: unless the
+                        // listener paused it, it plays on once hls.js has it again
+                        if(player.state !== "paused") hls.once(Hls.Events.MEDIA_ATTACHED, () => {
+                            if(player.token === token && player.audio === audio) audio.play().catch(e => console.warn("[otd-spaces]", e));
+                        });
                         hls.recoverMediaError();
                         return;
                     }
@@ -661,7 +666,8 @@
                 if(player.token === token && e?.name === "NotAllowedError") {
                     player.state = "paused";
                     changed();
-                } else throw e;
+                // the media choked before it began, taken back by hls.js, which plays it then
+                } else if(!(player.token === token && e?.name === "AbortError" && player.recovered.length)) throw e;
             }
         } catch(e) {
             if(player.token === token) fail(describe(e));
