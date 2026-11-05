@@ -168,7 +168,7 @@
         else if(entry.kind === "solver") solver = { ok: !!entry.ok, text: String(entry.text || ""), at: Date.now() };
         else if(entry.kind === "theme") theme = String(entry.text || "");
         else if(entry.kind === "spaces-player") spacesPlayer = { state: String(entry.state || ""), error: String(entry.error || "").slice(0, 80), at: Date.now(),
-            chat: String(entry.chat || "").slice(0, 80), captionsAsked: String(entry.captionsAsked || "").slice(0, 80), captions: Number(entry.captions) || 0,
+            chat: String(entry.chat || "").slice(0, 80), captionsAsked: String(entry.captionsAsked || "").slice(0, 80), captions: Number(entry.captions) || 0, translation: String(entry.translation || "").slice(0, 120),
             recovered: Array.isArray(entry.recovered) ? entry.recovered.slice(0, 3).map(r => String(r).slice(0, 160)) : [],
             // the stream's ID3 metadata by kind, and what X tells of one on stage: fields' names and kinds only
             metadata: Array.isArray(entry.metadata) ? entry.metadata.slice(0, 12).map(m => String(m).slice(0, 220)) : [],
@@ -438,7 +438,7 @@
             ...[...failed.values()].map(r => `  ${describe(r)} ${times(r)}`),
             `Columns asking for new tweets: ${polls.size ? "" : "none yet"}`,
             ...[...polls].map(([feed, p]) => `  ${feed} ×${p.count} (${p.cursorless} without a top cursor), the last at ${seconds(p.at)}, the last with tweets ${p.tweets ? `at ${seconds(p.tweets)}` : "none"}`),
-            `Spaces column: ${spaces ? `fleetline ${spaces.fleetline}, search ${spaces.search}, details ${spaces.details}; ${spaces.live} live, ${spaces.coming} to come, at ${seconds(spaces.at)}` : "no news"}${spacesPlayer ? `; player ${spacesPlayer.state}${spacesPlayer.error ? ` (${spacesPlayer.error})` : ""} at ${seconds(spacesPlayer.at)}${spacesPlayer.recovered.length ? `, going again after ${spacesPlayer.recovered.join("; ")}` : ""}${spacesPlayer.chat ? `, chat ${spacesPlayer.chat}${spacesPlayer.captionsAsked ? `, captions asked: ${spacesPlayer.captionsAsked}` : ""}, ${spacesPlayer.captions} captions${spacesPlayer.messages.length ? `, messages ${spacesPlayer.messages.join("; ")}` : ""}` : ""}` : ""}`,
+            `Spaces column: ${spaces ? `fleetline ${spaces.fleetline}, search ${spaces.search}, details ${spaces.details}; ${spaces.live} live, ${spaces.coming} to come, at ${seconds(spaces.at)}` : "no news"}${spacesPlayer ? `; player ${spacesPlayer.state}${spacesPlayer.error ? ` (${spacesPlayer.error})` : ""} at ${seconds(spacesPlayer.at)}${spacesPlayer.recovered.length ? `, going again after ${spacesPlayer.recovered.join("; ")}` : ""}${spacesPlayer.chat ? `, chat ${spacesPlayer.chat}${spacesPlayer.captionsAsked ? `, captions asked: ${spacesPlayer.captionsAsked}` : ""}, ${spacesPlayer.captions} captions${spacesPlayer.translation ? ` (translated: ${spacesPlayer.translation})` : ""}${spacesPlayer.messages.length ? `, messages ${spacesPlayer.messages.join("; ")}` : ""}` : ""}` : ""}`,
             ...(spacesPlayer?.answers.length ? [`  Spaces chat's answers: ${spacesPlayer.answers.join("; ")}`] : []),
             ...(spacesPlayer?.metadata.length ? [`  Spaces stream's metadata: ${spacesPlayer.metadata.join("; ")}`] : []),
             ...(spacesPlayer?.participant ? [`  Spaces' one on stage: ${spacesPlayer.participant}`] : []),
