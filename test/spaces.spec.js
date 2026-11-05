@@ -91,6 +91,8 @@ async function open(page, { user = "1", main = MAIN, answer = {}, clock = "fixed
         signedChat: () => [200, { access_token: "access-2", endpoint: "https://chat.test", room_id: "room-1" }],
         // the captions asked for, as x.com does
         enable: () => [200, {}],
+        // X's live chat, x.com's way to the captions now: none by default, the Periscope chat of before instead
+        liveChat: () => [404, ""],
         // the Space's audio: a live one's playlist, a segment more every 2 s, as X's is until the Space ends; each
         // Space a stream of its own, from its own first request on
         playlist: key => (lives[key] ||= live())(), ...answer };
@@ -140,6 +142,13 @@ async function open(page, { user = "1", main = MAIN, answer = {}, clock = "fixed
             const method = new URL(request.url()).pathname.split("/").pop();
             asked.push({ path: `/pscp${new URL(request.url()).pathname}`, body: request.postDataJSON(), agent: request.headers()["x-periscope-user-agent"] || null });
             return reply(route, { accessChatPublic: answers.chat, loginTwitterToken: answers.login, accessChat: answers.signedChat, enableSpacesCaption: answers.enable }[method]?.() ?? [404, ""]);
+        },
+        // X's live chat: the Space's captions, reactions and controls, a line of JSON each
+        "https://api.otd.test/": route => {
+            const request = route.request(), url = new URL(request.url());
+            if(url.pathname !== "/live-chat") return route.abort();
+            asked.push({ path: `/api${url.pathname}`, query: Object.fromEntries(url.searchParams), actAs: request.headers()["x-act-as-user-id"] || null, auth: /^Bearer /.test(request.headers().authorization || "") });
+            return Promise.resolve(answers.liveChat(url.searchParams.get("broadcastId"))).then(answer => reply(route, answer));
         },
         "https://abs.twimg.com/": route => {
             asked.push({ path: new URL(route.request().url()).pathname });
@@ -555,14 +564,14 @@ test("the player shows who's on stage, and from the Space's chat who speaks and 
     // for the load watchdog: the chat open, its captions, its kinds of messages by their fields' names only
     asked.chat.socket.send(chatMessage(2, { occupancy: 40, total_participants: 50 }));
     await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).messages)).toEqual(["1:45:body,final,timestamp,type,username", "2:-:occupancy,total_participants"]);
-    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1))).toMatchObject({ state: "playing", chat: "open, as a guest", captionsAsked: "ok", captions: 4,
+    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1))).toMatchObject({ state: "playing", chat: "live chat HTTP 404; open, as a guest", captionsAsked: "ok", captions: 4,
         // what proxsee's answers were made of, and X's one on stage: fields' names, kinds and hosts only
         answers: { accessChatPublic: "{access_token:text,endpoint:https://chat.test,room_id:text,replay_endpoint:https://chat.test}", enableSpacesCaption: "{}" },
         participant: "{periscope_user_id:text,display_name:text,twitter_screen_name:text,avatar_url:https://pbs.twimg.com,user_results:{rest_id:text,result:{__typename:text}}}" });
 
     // closed: the chat too
     await page.click(".otd-space-player-close");
-    await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).chat)).toBe("closed");
+    await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).chat)).toBe("live chat HTTP 404; closed");
 });
 
 test("the chat not to be had, as a guest or signed in: the Space plays all the same", async ({ page }) => {
@@ -572,7 +581,7 @@ test("the chat not to be had, as a guest or signed in: the Space plays all the s
     await plays(page, 0.5);
     expect((await playerShown(page)).state).toBe("В эфире · Hana");
     expect(asked.chat.socket).toBeNull();
-    await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).chat)).toBe("accessChat: HTTP 403");
+    await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).chat)).toBe("live chat HTTP 404; accessChat: HTTP 403");
     expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1))).toMatchObject({ state: "playing", captions: 0 });
     // refused with the login kept, it's asked again with a new one, once; the captions asked for all the same, as
     // x.com, which opens no chat, asks
@@ -596,7 +605,7 @@ test("a Space whose chat a guest gets no address of: the chat as x.com's signed 
     expect(steps[3].body).toEqual({ chat_token: "chat-1", cookie: "cookie-1" });
     // the chat told the signed in token
     expect(JSON.parse(asked.chat.sent[0].payload)).toEqual({ access_token: "access-2" });
-    await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).chat)).toBe("open, signed in");
+    await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).chat)).toBe("live chat HTTP 404; open, signed in");
     asked.chat.socket.send(caption("alice", "Привет"));
     await expect.poll(() => playerShown(page).then(p => p.state)).toBe("Говорит Alice");
 
@@ -605,7 +614,7 @@ test("a Space whose chat a guest gets no address of: the chat as x.com's signed 
     await listenButton(page, "1LiveBBBBBBBB").click();
     await expect.poll(() => asked.filter(a => a.path === "/pscp/api/v2/enableSpacesCaption").map(a => a.body.broadcast_id)).toEqual(["1LiveAAAAAAAA", "1LiveBBBBBBBB"]);
     expect(asked.filter(a => a.path === "/pscp/api/v2/loginTwitterToken").length).toBe(before);
-    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1))).toMatchObject({ chat: "open, signed in", captionsAsked: "ok" });
+    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1))).toMatchObject({ chat: "live chat HTTP 404; open, signed in", captionsAsked: "ok" });
 });
 
 test("the player's buttons and the cards' keep their look in the dark theme with the pointer over them and pressed", async ({ page }) => {
@@ -635,13 +644,69 @@ test("the player's buttons and the cards' keep their look in the dark theme with
     }
 });
 
+// X's live chat as it answers: a line of JSON for each thing, its time in nanoseconds
+const ns = ms => `${BigInt(Math.round(ms)) * 1000000n}`;
+const liveChat = lines => [200, lines.map(line => JSON.stringify(line)).join("\n") + "\n"];
+
+test("captions from X's live chat, as x.com has them now: what was said before kept to scroll back to, then the new ones as they're said", async ({ page }) => {
+    const asked = await open(page, { answer: { liveChat: () => liveChat([
+        { ts: ns(NOW - 60000), chatType: 2, userId: "22", message: "💯", isBackfill: true },
+        { ts: ns(NOW - 50000), chatType: 45, userId: "50", message: " Доброе утро", legacyUuid: "u1", isBackfill: true, final: true },
+        { ts: ns(NOW - 40000), chatType: 40, userId: ALICE, legacyUuid: "u2", isBackfill: true, controlType: 17, targetUserId: ALICE, targetSessionUuid: "s1" },
+        // said, then said whole
+        { ts: ns(NOW - 1000), chatType: 45, userId: ALICE, message: " Всем привет", legacyUuid: "u3", final: false },
+        { ts: ns(NOW - 500), chatType: 45, userId: ALICE, message: " Всем привет, сегодня <b>о главном</b>", legacyUuid: "u3", final: true },
+    ]) } });
+    await expect.poll(() => cards(page)).toBe(4);
+    await listenButton(page, "1LiveAAAAAAAA").click();
+    await plays(page, 0.2);
+    // the last one under the faces, by the name AudioSpaceById has for the id
+    await expect.poll(() => captionShown(page)).toBe("Alice: Всем привет, сегодня <b>о главном</b>");
+    expect(await page.locator(".otd-space-player-cc").isHidden()).toBe(false);
+    // across the column, with what was said before the listener came; once each, the chat answering again
+    await page.click(".otd-space-player-wide");
+    await expect.poll(() => captionLines(page)).toEqual(["Hana: Доброе утро", "Alice: Всем привет, сегодня <b>о главном</b>"]);
+    await expect.poll(() => asked.filter(a => a.path === "/api/live-chat").length, { timeout: 8000 }).toBeGreaterThan(1);
+    await page.waitForTimeout(300);
+    expect(await captionLines(page)).toEqual(["Hana: Доброе утро", "Alice: Всем привет, сегодня <b>о главном</b>"]);
+
+    // asked as x.com asks, signed in; the Periscope chat of before not asked for
+    const first = asked.find(a => a.path === "/api/live-chat");
+    expect(first).toMatchObject({ query: { broadcastId: "1LiveAAAAAAAA" }, actAs: null, auth: true });
+    expect(first.query.sessionId).toMatch(/^\d+$/);
+    expect(asked.some(a => a.path === "/pscp/api/v2/accessChatPublic")).toBe(false);
+    // for the load watchdog: its kinds of lines by their fields' names only
+    const told = await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1));
+    expect(told.chat).toMatch(/^live chat (open|reconnecting)$/);
+    expect(told.messages).toEqual([
+        "live 2:chatType,isBackfill,message,ts,userId", "live 45:chatType,final,isBackfill,legacyUuid,message,ts,userId",
+        "live 40/17:chatType,controlType,isBackfill,legacyUuid,targetSessionUuid,targetUserId,ts,userId", "live 45:chatType,final,legacyUuid,message,ts,userId",
+    ]);
+});
+
+test("a caption of X's live chat shows as the audio gets to when it was said, by the stream's clock", async ({ page }) => {
+    let send = null;
+    await open(page, { answer: { liveChat: () => send ? [404, ""] : new Promise(resolve => send = resolve) } });
+    await expect.poll(() => cards(page)).toBe(4);
+    await keptHls(page);
+    await listenButton(page, "1LiveAAAAAAAA").click();
+    await plays(page, 0.2);
+    // the stream's clock: a moment ahead in the audio was said at NOW; the caption 2 s after it
+    await page.evaluate(now => window.__metadata([["JSONMetadata", { HydraVersion: 1, ntp: now }]], 0.1, 0), NOW);
+    await expect.poll(() => typeof send).toBe("function");
+    send(liveChat([{ ts: ns(NOW + 2000), chatType: 45, userId: ALICE, message: " Сейчас", legacyUuid: "c1", final: true }]));
+    await page.waitForTimeout(800);
+    expect(await captionShown(page)).toBeNull();
+    await explained(page, expect.poll(() => captionShown(page), { timeout: 8000 }).toBe("Alice: Сейчас"));
+});
+
 test("captions X won't turn on: the Space plays and its chat stays open, the diagnostics say so", async ({ page }) => {
     const asked = await open(page, { answer: { enable: () => [400, ""] } });
     await expect.poll(() => cards(page)).toBe(4);
     await listenButton(page, "1LiveAAAAAAAA").click();
     await plays(page, 0.5);
     await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).captionsAsked)).toBe("enableSpacesCaption: HTTP 400");
-    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).chat)).toBe("open, as a guest");
+    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).chat)).toBe("live chat HTTP 404; open, as a guest");
     expect(asked.chat.socket).not.toBeNull();
 });
 

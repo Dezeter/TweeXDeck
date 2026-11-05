@@ -743,7 +743,7 @@
     function report() {
         document.dispatchEvent(new CustomEvent("otd-diagnostic", { detail: JSON.stringify({
             kind: "spaces-player", state: player.state || "stopped", error: player.error, recovered: player.recovered.slice(-3),
-            chat: chat.status, captionsAsked: chat.asked, captions: chat.captions, messages: [...chat.shapes.keys()], answers: chat.answers,
+            chat: chat.liveFailed ? `live chat ${chat.liveFailed}; ${chat.status}` : chat.via === "X's live chat" ? `live chat ${chat.status}` : chat.status, captionsAsked: chat.asked, captions: chat.captions, messages: [...chat.shapes.keys()], answers: chat.answers,
             metadata: [...metadata].map(([kind, n]) => `${kind} ×${n}`), participant: participantShape, space: spaceShape, hydra: hydraStats(),
         }) }));
     }
@@ -757,6 +757,7 @@
         for(const sample of samples || []) {
             for(const frame of id3Frames(sample?.data)) {
                 if(frame.id === "TXXX" && HYDRA.includes(frame.label)) heardHydra(frame.label, json(frame.raw), Number(sample.pts));
+                if(frame.id === "TXXX" && frame.label === "JSONMetadata") heardClock(json(frame.raw), Number(sample.pts));
                 const kind = `${frame.id}${frame.label ? `(${frame.label.slice(0, 60)})` : ""}:${frame.value}`.slice(0, 200);
                 if(!metadata.has(kind) && metadata.size >= 12) continue;
                 metadata.set(kind, (metadata.get(kind) || 0) + 1);
@@ -819,10 +820,38 @@
     // where the host isn't in it, as X's is. Each has its time in the stream (hls.js's pts), so it's applied as the
     // audio gets there. Someone speaks while they're loud next to the loudest of the last seconds, and a moment after.
     const HYDRA = ["HydraParticipants", "HydraAudioLevel"];
+    // the stream's clock: TXXX "JSONMetadata" { HydraVersion, ntp } in its chunks, the time of day of that place in
+    // the stream, for what's heard to be told the time of day it was said at; { pts, ms }
+    const streamClock = [];
+    function heardClock(value, pts) {
+        const ms = wallClock(Number(value?.ntp));
+        if(!Number.isFinite(ms) || !Number.isFinite(pts)) return;
+        streamClock.push({ pts, ms });
+        if(streamClock.length > 1 && streamClock[streamClock.length - 2].pts > pts) streamClock.sort((a, b) => a.pts - b.pts);
+        if(streamClock.length > 60) streamClock.splice(0, streamClock.length - 60);
+    }
+    // a time of day in whatever X counts it in, milliseconds, seconds, NTP's seconds from 1900 or its fixed point, as
+    // milliseconds; the one that's about now
+    function wallClock(ntp) {
+        if(!Number.isFinite(ntp) || ntp <= 0) return NaN;
+        const now = Date.now();
+        return [ntp, ntp * 1000, (ntp - 2208988800) * 1000, ntp / 1000, ntp / 1e6, (ntp / 2 ** 32 - 2208988800) * 1000]
+            .find(ms => Math.abs(ms - now) < 10 * 60 * 1000) ?? NaN;
+    }
+    // the time of day what's heard now was said at; NaN where the stream doesn't tell, -Infinity where its clock is
+    // all ahead of what's heard
+    function heardAt() {
+        const at = player.audio?.currentTime;
+        if(!streamClock.length || !Number.isFinite(at)) return NaN;
+        let mark = null;
+        for(const tick of streamClock) if(tick.pts <= at + 0.05) mark = tick;
+        return mark ? mark.ms + (at - mark.pts) * 1000 : -Infinity;
+    }
     const SPOKE_FOR = 700;
     const hydra = { queue: [], participants: [], spoke: new Map(), loudest: null, peak: 0, peakAt: 0, timer: 0, stats: null };
     function resetHydra() {
         clearInterval(hydra.timer);
+        streamClock.length = 0;
         Object.assign(hydra, { queue: [], participants: [], spoke: new Map(), loudest: null, peak: 0, peakAt: 0, timer: 0,
             stats: { levels: 0, lengths: new Set(), ways: new Set(), min: Infinity, max: -Infinity, offClock: false } });
     }
@@ -908,10 +937,10 @@
     // someone on stage AudioSpaceById hasn't told of yet: asked again for their name, as x.com does when someone
     // comes up, once in 15 s at most
     let newcomersAt = -Infinity;
-    function newcomers() {
+    function newcomers(unknown = false) {
         const space = player.space, token = player.token;
         if(!space || !token || performance.now() - newcomersAt < 15000) return;
-        if(hydra.participants.every(p => known_(p.screenName.toLowerCase()))) return;
+        if(!unknown && hydra.participants.every(p => known_(p.screenName.toLowerCase()))) return;
         newcomersAt = performance.now();
         details(space.id, player.user).then(fresh => {
             if(player.token !== token) return;
@@ -966,7 +995,9 @@
     // via: how its address came, as a guest or signed in
     // asked: how asking for its captions went
     // answers: what proxsee's answers were made of, by method, for the diagnostics
-    const chat = { socket: null, token: null, status: "", via: "", asked: "", askedFor: null, answers: {}, captions: 0, shapes: new Map(), speaker: null, caption: null, lines: [], timer: 0, retries: 0 };
+    // live: X's live chat being read; pending: its captions waiting for the audio to get to them; seen: theirs by id,
+    // whether final
+    const chat = { socket: null, live: null, token: null, status: "", liveFailed: "", via: "", asked: "", askedFor: null, answers: {}, captions: 0, shapes: new Map(), speaker: null, caption: null, lines: [], pending: [], seen: new Map(), timer: 0, liveTimer: 0, retries: 0 };
     const captionsOn = () => localStorage[CAPTIONS_STORAGE] !== "0";
     const json = text => {
         if(typeof text !== "string") return text && typeof text === "object" ? text : null;
@@ -978,9 +1009,19 @@
     };
     async function openChat(chatToken, token) {
         closeChat();
-        Object.assign(chat, { token, status: chatToken ? "connecting" : "no chat token", asked: "", answers: {}, captions: 0, shapes: new Map(), speaker: null, caption: null, lines: [], retries: 0 });
+        Object.assign(chat, { token, status: "connecting", liveFailed: "", via: "", asked: "", answers: {}, captions: 0, shapes: new Map(), speaker: null, caption: null, lines: [], pending: [], seen: new Map(), retries: 0 });
         report();
-        if(!chatToken) return;
+        // x.com's own: X's live chat; the Periscope chat it had before where that doesn't answer
+        if(await liveChat(token)) {
+            if(chat.token === token) askCaptions(token);
+            return;
+        }
+        if(chat.token !== token) return;
+        if(!chatToken) {
+            chat.status = "no chat token";
+            report();
+            return askCaptions(token);
+        }
         const user = player.user;
         try {
             let access = await proxsee("accessChatPublic", { chat_token: chatToken }).catch(() => null);
@@ -1111,14 +1152,145 @@
         if(!chat.timer) chat.timer = setInterval(speakingNow, 1000);
     }
     function closeChat() {
-        const socket = chat.socket;
-        Object.assign(chat, { socket: null, token: null, speaker: null, caption: null, lines: [] });
+        const socket = chat.socket, live = chat.live;
+        Object.assign(chat, { socket: null, live: null, token: null, speaker: null, caption: null, lines: [], pending: [], seen: new Map() });
         if(chat.status && chat.status !== "no chat token") chat.status = "closed";
         try {
             socket?.close();
         } catch(e) {}
+        live?.abort();
         clearInterval(chat.timer);
-        chat.timer = 0;
+        clearInterval(chat.liveTimer);
+        chat.timer = chat.liveTimer = 0;
+    }
+
+    // --- X's live chat: the captions ---------------------------------------------------------------------------
+    // As x.com has them now: api.x.com/live-chat?broadcastId=…&sessionId=…, an answer that goes on, a line of JSON
+    // for each thing that happens, { ts (in ns), chatType, userId, … }, what came before first (isBackfill). Kind 45 is
+    // a caption, { message, final, legacyUuid }; 2 a reaction in the chat; 40 a control, 17 and 16 a mic on and off.
+    // Captions come as they're said and the audio is behind: they're shown as it gets to them, by the stream's clock.
+    const LIVE_CAPTION = 45;
+    const API = `https://api.${location.hostname.replace(/^(www|mobile)\./, "")}`;
+    async function liveChat(token) {
+        const space = player.space, user = player.user;
+        if(!space || chat.token !== token) return false;
+        const controller = new AbortController();
+        chat.live = controller;
+        const path = "/live-chat";
+        try {
+            const headers = await OTD.xHeaders(path, "GET", actAs(user));
+            if(chat.token !== token) return false;
+            // a number of the listener's own, as x.com makes one
+            const params = new URLSearchParams({ broadcastId: space.id, sessionId: String(1 + Math.floor(Math.random() * 2 ** 31)) });
+            const res = await fetch(`${API}${path}?${params}`, { headers, credentials: "include", signal: controller.signal });
+            if(!res.ok || !res.body) throw failure(`HTTP ${res.status}`, res.status);
+            if(chat.token !== token) return false;
+            Object.assign(chat, { status: "open", via: "X's live chat", liveFailed: "" });
+            if(!chat.liveTimer) chat.liveTimer = setInterval(releaseCaptions, 250);
+            if(!chat.timer) chat.timer = setInterval(speakingNow, 1000);
+            report();
+            readLive(res.body, token, controller);
+            return true;
+        } catch(e) {
+            if(chat.token === token && chat.live === controller) {
+                chat.live = null;
+                chat.liveFailed = describe(e);
+            }
+            return false;
+        }
+    }
+    async function readLive(body, token, controller) {
+        const reader = body.getReader(), decoder = new TextDecoder();
+        let rest = "";
+        try {
+            for(;;) {
+                const { value, done } = await reader.read();
+                if(chat.live !== controller) return reader.cancel().catch(() => {});
+                rest += decoder.decode(value || new Uint8Array(), { stream: !done });
+                const lines = rest.split("\n");
+                rest = done ? "" : lines.pop();
+                for(const line of lines) if(line.trim()) heardLive(json(line.trim()));
+                if(done) break;
+            }
+        } catch(e) {}
+        if(chat.live !== controller || chat.token !== token) return;
+        // it ended: again a few times while the Space plays, what was said before it coming again, kept once
+        chat.live = null;
+        if(chat.retries++ < 5) {
+            chat.status = "reconnecting";
+            setTimeout(async () => {
+                if(chat.token !== token || chat.live) return;
+                if(!await liveChat(token) && chat.token === token) {
+                    chat.status = `closed (${chat.liveFailed})`;
+                    report();
+                }
+            }, 3000 * chat.retries);
+        } else {
+            chat.status = "closed";
+        }
+        report();
+    }
+    function heardLive(line) {
+        if(!line || typeof line !== "object") return;
+        // what kinds come, for the diagnostics: the kind, a control's kind, the fields' names
+        const shape = `live ${line.chatType ?? "?"}${line.controlType != null ? `/${line.controlType}` : ""}:${Object.keys(line).sort().join(",")}`.slice(0, 120);
+        if(!chat.shapes.has(shape) && chat.shapes.size < 12) {
+            chat.shapes.set(shape, true);
+            report();
+        }
+        if(line.chatType !== LIVE_CAPTION || typeof line.message !== "string") return;
+        const id = String(line.legacyUuid || "");
+        if(id && chat.seen.get(id)) return;
+        const final = line.final !== false;
+        if(id) chat.seen.set(id, final);
+        if(chat.seen.size > 500) chat.seen.delete(chat.seen.keys().next().value);
+        const caption = { id, userId: String(line.userId || ""), text: line.message.trim(), final, at: Number(line.ts) / 1e6, came: performance.now() };
+        if(!caption.text) return;
+        chat.captions++;
+        // what was said before the listener came: kept to scroll back to, not said now
+        if(line.isBackfill) {
+            addLine(caption);
+            return drawSpeaking();
+        }
+        chat.pending.push(caption);
+        releaseCaptions();
+    }
+    // the captions the audio has got to: all of them where the stream has no clock, or after a minute whatever it says
+    function releaseCaptions() {
+        if(!chat.pending.length) return;
+        const heard = heardAt(), now = performance.now();
+        const due = chat.pending.filter(c => !Number.isFinite(c.at) || Number.isNaN(heard) || c.at <= heard || now - c.came > 60000);
+        if(!due.length) return;
+        chat.pending = chat.pending.filter(c => !due.includes(c));
+        for(const caption of due) {
+            const line = addLine(caption);
+            chat.caption = { text: line.text, name: line.name, at: now };
+            // who speaks by the captions only where the stream doesn't tell
+            if(!hydra.participants.length) chat.speaker = { username: line.username, name: line.name, at: now };
+        }
+        drawSpeaking();
+    }
+    // a caption into what was said: the same one again as it's said, the whole of it so far, till it's final
+    function addLine(caption) {
+        const who = personById(caption.userId);
+        const line = { id: caption.id, userId: caption.userId, username: who.username, name: who.name, text: caption.text, final: caption.final };
+        const same = caption.id ? chat.lines.find(l => l.id === caption.id) : null;
+        const last = chat.lines.at(-1);
+        if(same) Object.assign(same, line);
+        else if(!caption.id && last && last.username === line.username && !last.final) Object.assign(last, line);
+        else chat.lines.push(line);
+        if(chat.lines.length > 60) chat.lines.splice(0, chat.lines.length - 60);
+        if(!who.name) newcomers(true);
+        return same || line;
+    }
+    // someone by their X id: as AudioSpaceById has them, else as the stream's stage has them
+    function personById(id) {
+        const space = player.space;
+        const known = id && space ? [space.host, ...space.admins, ...space.speakers, ...space.listeners].find(p => p?.id === id) : null;
+        if(known) return { username: known.screenName.toLowerCase(), name: known.name || `@${known.screenName}` };
+        const on = id ? hydra.participants.find(p => p.id === id) : null;
+        if(on) return { username: on.screenName.toLowerCase(), name: known_(on.screenName.toLowerCase())?.name || `@${on.screenName}` };
+        return { username: id ? `id:${id}` : "", name: "" };
     }
     function heardChat(data) {
         const message = json(data);
@@ -1321,7 +1493,7 @@
         box.classList.toggle("is-wide", wide);
         const lines = !captionsOn() || (state !== "playing" && !(wide && state === "paused")) ? []
             : wide ? chat.lines.slice(-40) : chat.caption && chat.lines.length ? chat.lines.slice(-1) : [];
-        const shownLines = lines.map(line => ({ name: line.name, text: wide || line.text.length <= 160 ? line.text : `…${line.text.slice(-160)}` }));
+        const shownLines = lines.map(line => ({ name: (line.userId && personById(line.userId).name) || line.name || "…", text: wide || line.text.length <= 160 ? line.text : `…${line.text.slice(-160)}` }));
         const drawnNow = JSON.stringify([wide, shownLines]);
         if(caption.otdDrawn !== drawnNow) {
             caption.otdDrawn = drawnNow;
