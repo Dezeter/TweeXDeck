@@ -81,6 +81,7 @@ async function open(page, { user = "1", main = MAIN, answer = {}, clock = "fixed
     if(clock === "fixed") await page.clock.setFixedTime(NOW);
     else await page.clock.install({ time: NOW });
     const asked = [];
+    const lives = {};
     const answers = { fleetline: () => [200, FLEETLINE], search: () => [200, SEARCH], space: id => [200, SPACES[id] ?? { data: {} }],
         stream: key => [200, { source: { location: `https://stream.test/${key}/playlist.m3u8?type=live`, status: "LIVE_PUBLIC", streamType: "HLS" }, chatToken: "chat-1" }],
         chat: () => [200, { access_token: "access-1", endpoint: "https://chat.test", room_id: "room-1", replay_endpoint: "https://chat.test" }],
@@ -90,8 +91,9 @@ async function open(page, { user = "1", main = MAIN, answer = {}, clock = "fixed
         signedChat: () => [200, { access_token: "access-2", endpoint: "https://chat.test", room_id: "room-1" }],
         // the captions asked for, as x.com does
         enable: () => [200, {}],
-        // the Space's audio: a live one's playlist, a segment more every 2 s, as X's is until the Space ends
-        playlist: live(), ...answer };
+        // the Space's audio: a live one's playlist, a segment more every 2 s, as X's is until the Space ends; each
+        // Space a stream of its own, from its own first request on
+        playlist: key => (lives[key] ||= live())(), ...answer };
     const reply = (route, [status, body]) => route.fulfill({ status, contentType: "application/json", headers: CORS, body: typeof body === "string" ? body : JSON.stringify(body) });
     // the chat's WebSocket, before the page opens as Playwright has it: what the page sent it, and a way to send
     // the page what X's chat would
@@ -126,10 +128,10 @@ async function open(page, { user = "1", main = MAIN, answer = {}, clock = "fixed
             return route.fulfill({ contentType: "text/javascript", body: fs.readFileSync(path.join(ROOT, file)) });
         },
         "https://stream.test/": route => {
-            const name = new URL(route.request().url()).pathname.split("/").pop();
+            const [, key, name] = new URL(route.request().url()).pathname.split("/");
             asked.push({ path: `/stream/${name}` });
             const headers = { "access-control-allow-origin": "*" };
-            if(name.endsWith(".m3u8")) return route.fulfill({ contentType: "application/vnd.apple.mpegurl", headers, body: answers.playlist() });
+            if(name.endsWith(".m3u8")) return route.fulfill({ contentType: "application/vnd.apple.mpegurl", headers, body: answers.playlist(key) });
             return route.fulfill({ contentType: "audio/mp4", headers, body: fs.readFileSync(path.join(FIXTURES, name)) });
         },
         // the Space's chat: its address and token for the stream's chat token
@@ -677,4 +679,78 @@ test("the stream's own metadata, ID3 in its chunks: what kinds come, for the dia
         "PRIV(com.apple.streaming.transportStreamTimestamp):bytes(8) ×2",
         "TXXX(captions):{speaker:text,text:text,final:boolean} ×2",
     ]);
+});
+
+// hls.js as the page has it, its instance kept to hand it metadata as from a chunk; an ID3 tag of TXXX frames
+async function keptHls(page) {
+    await page.evaluate(async () => {
+        const script = document.createElement("script");
+        script.textContent = await fetch("http://otd.test/ext/files/hls/hls.light.min.js").then(res => res.text());
+        document.head.append(script);
+        const Real = window.Hls;
+        window.Hls = class extends Real {
+            constructor(config) {
+                super(config);
+                window.__hls = this;
+            }
+        };
+        const encode = text => [...new TextEncoder().encode(text)];
+        const size = n => [(n >> 21) & 0x7f, (n >> 14) & 0x7f, (n >> 7) & 0x7f, n & 0x7f];
+        // TXXX frames by description and JSON value, at `ahead` seconds past where the audio is, again every 0.15 s
+        // for `lasting` seconds, as the stream has its levels
+        window.__metadata = (frames, ahead = 0.1, lasting = 0) => {
+            const bytes = frames.flatMap(([label, value]) => {
+                const body = [3, ...encode(label), 0, ...encode(JSON.stringify(value))];
+                return [...encode("TXXX"), ...size(body.length), 0, 0, ...body];
+            });
+            const tag = new Uint8Array([0x49, 0x44, 0x33, 4, 0, 0, ...size(bytes.length), ...bytes]);
+            const start = window.__audio.currentTime + ahead;
+            const samples = [];
+            for(let pts = start; pts <= start + lasting + 1e-9; pts += 0.15) samples.push({ data: tag, pts, dts: pts, len: tag.length, duration: Infinity, type: "https://aomedia.org/emsg/ID3" });
+            window.__hls.trigger(Hls.Events.FRAG_PARSING_METADATA, { id: "main", frag: { start, duration: 2, end: start + 2, sn: 1, level: 0, type: "main" }, details: { live: true }, samples });
+        };
+    });
+}
+const STAGE = [
+    { ParticipantIndex: 0, UserName: "hana", UserId: "50", ProfileUrl: "https://pbs.twimg.com/profile_images/50/h_normal.jpg", SessionId: "s0" },
+    { ParticipantIndex: 1, UserName: "alice", UserId: "1600000000000000001", ProfileUrl: "https://pbs.twimg.com/profile_images/1/a_normal.jpg", SessionId: "s1" },
+    { ParticipantIndex: 2, UserName: "newbie", UserId: "90", ProfileUrl: "https://pbs.twimg.com/profile_images/90/n_normal.jpg", SessionId: "s2" },
+];
+
+test("who's on stage and who speaks by the stream itself: HydraParticipants and HydraAudioLevel, as the audio gets to them", async ({ page }) => {
+    await open(page);
+    await expect.poll(() => cards(page)).toBe(4);
+    await keptHls(page);
+    await listenButton(page, "1LiveAAAAAAAA").click();
+    await plays(page, 0.2);
+    // the stage as the stream has it: someone AudioSpaceById hasn't heard of yet too, by their handle
+    await page.evaluate(stage => window.__metadata([["HydraParticipants", stage], ["HydraAudioLevel", [0.02, 0.9, 0]]], 0.1, 2), STAGE);
+    await expect.poll(() => stageShown(page)).toEqual(["Hana @hana", "Alice @alice *", "@newbie"]);
+    expect((await playerShown(page)).state).toBe("Говорит Alice");
+    // not before the audio gets there: Hana a long way ahead, held up neither by nor before what comes after
+    await page.evaluate(() => window.__metadata([["HydraAudioLevel", [0.8, 0, 0]]], 20, 1));
+    await page.waitForTimeout(1200);
+    expect((await playerShown(page)).state).not.toBe("Говорит Hana");
+    // two at once: both marked, the loudest named
+    await page.evaluate(() => window.__metadata([["HydraAudioLevel", [0.8, 0, 0.7]]], 0.05, 2));
+    await explained(page, expect.poll(() => stageShown(page), { timeout: 5000 }).toEqual(["Hana @hana *", "Alice @alice", "@newbie *"]));
+    expect((await playerShown(page)).state).toBe("Говорит Hana");
+    // quiet once their levels are past: no one a moment later
+    await expect.poll(() => playerShown(page).then(p => p.state), { timeout: 8000 }).toBe("В эфире · Hana");
+    expect(await stageShown(page)).toEqual(["Hana @hana", "Alice @alice", "@newbie"]);
+    // for the diagnostics: how many on stage, their indexes, the levels' lengths and range
+    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).hydra)).toMatch(/^3 on stage \(indexes 0,1,2\), levels ×\d+ of 3 each, 0…0\.9$/);
+});
+
+test("levels by participants' indexes where there aren't as many as on stage", async ({ page }) => {
+    await open(page);
+    await expect.poll(() => cards(page)).toBe(4);
+    await keptHls(page);
+    await listenButton(page, "1LiveAAAAAAAA").click();
+    await plays(page, 0.2);
+    // indexes 0 and 3: four levels, the one at 3 Alice's
+    const stage = [{ ...STAGE[0] }, { ...STAGE[1], ParticipantIndex: 3 }];
+    await page.evaluate(stage => window.__metadata([["HydraParticipants", stage], ["HydraAudioLevel", [0, 0.5, 0.5, 0.9]]], 0.1, 2), stage);
+    await expect.poll(() => playerShown(page).then(p => p.state)).toBe("Говорит Alice");
+    expect(await stageShown(page)).toEqual(["Hana @hana", "Alice @alice *"]);
 });

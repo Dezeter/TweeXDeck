@@ -173,8 +173,11 @@
             // the stream's ID3 metadata by kind, and what X tells of one on stage: fields' names and kinds only
             metadata: Array.isArray(entry.metadata) ? entry.metadata.slice(0, 12).map(m => String(m).slice(0, 220)) : [],
             participant: String(entry.participant || "").slice(0, 600),
+            space: String(entry.space || "").slice(0, 2500),
             // what proxsee's answers were made of, by method: fields' names and kinds only
-            answers: entry.answers && typeof entry.answers === "object" ? Object.entries(entry.answers).slice(0, 5).map(([method, shape]) => `${String(method).slice(0, 40)} ${String(shape).slice(0, 400)}`) : [],
+            answers: entry.answers && typeof entry.answers === "object" ? Object.entries(entry.answers).slice(0, 5).map(([method, shape]) => `${String(method).slice(0, 40)} ${String(shape).slice(0, 2500)}`) : [],
+            // who's on stage and who speaks by the stream: how many, their indexes, the levels' lengths and range
+            hydra: String(entry.hydra || "").slice(0, 300),
             messages: Array.isArray(entry.messages) ? entry.messages.slice(0, 12).map(m => String(m).slice(0, 120)) : [] };
         else if(entry.kind === "spaces") spaces = { fleetline: String(entry.fleetline || "—"), search: String(entry.search || "—"), details: String(entry.details || ""), live: Number(entry.live) || 0, coming: Number(entry.coming) || 0, at: Date.now() };
         else if(entry.kind === "poll") {
@@ -439,6 +442,8 @@
             ...(spacesPlayer?.answers.length ? [`  Spaces chat's answers: ${spacesPlayer.answers.join("; ")}`] : []),
             ...(spacesPlayer?.metadata.length ? [`  Spaces stream's metadata: ${spacesPlayer.metadata.join("; ")}`] : []),
             ...(spacesPlayer?.participant ? [`  Spaces' one on stage: ${spacesPlayer.participant}`] : []),
+            ...(spacesPlayer?.hydra ? [`  Spaces' stage by the stream: ${spacesPlayer.hydra}`] : []),
+            ...(spacesPlayer?.space ? [`  Spaces' AudioSpaceById: ${spacesPlayer.space}`] : []),
             `Waiting for X: ${pending.size ? "" : "nothing"}`,
             ...waitingFor(0).map(r => `  ${r.method} ${r.url} for ${r.seconds} s`),
             `Still asked at api.x.com and answered: ${[...oldApi].map(([path, v]) => `${path} ×${v.count}`).join(", ") || "nothing"}`,

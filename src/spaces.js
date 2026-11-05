@@ -8,7 +8,8 @@
 //   main.js when it has them, the ones known when this was written otherwise.
 // "Listen" plays a live one right here, one at a time, in a player on top of the column it was started from: its
 // stream from live_video_stream/status, played with hls.js (files/hls/, Apache 2.0) or the browser's own HLS. The
-// player shows who's on stage, and from the Space's chat, as x.com's listeners get it, its captions and who speaks. Live
+// player shows who's on stage and who speaks, from what X's stream itself carries in its chunks (ID3 tags), and
+// captions from the Space's chat where it has one. Live
 // ones are asked for every minute while the page is in view; nothing is asked while there's no Spaces column.
 // Loaded by injection.js after for-you.js.
 (() => {
@@ -235,6 +236,8 @@
         // what X tells of one on stage, for the diagnostics: its fields' names only
         const onStage = participants.speakers?.[0] || participants.admins?.[0];
         if(onStage) participantShape = shape(onStage);
+        // and of the whole of it, but its people
+        spaceShape = shape({ ...space, participants: undefined });
         const admins = (participants.admins || []).map(person);
         const creator = user(meta.creator_results);
         const host = creator?.rest_id ? {
@@ -257,7 +260,7 @@
         };
     }
 
-    let participantShape = "";
+    let participantShape = "", spaceShape = "";
 
     // --- what's known, by account -----------------------------------------------------------------------------
     const states = new Map();
@@ -610,6 +613,7 @@
         const token = {};
         Object.assign(player, { space, column: column.key, user: column.user, state: "connecting", error: "", chatToken: "", token, recovered: [], recoveredAt: -Infinity });
         metadata.clear();
+        resetHydra();
         changed();
         try {
             const stream = await streamOf(space, column.user);
@@ -678,6 +682,8 @@
     function release() {
         player.token = null;
         closeChat();
+        clearInterval(hydra.timer);
+        hydra.timer = 0;
         player.hls?.destroy();
         player.hls = null;
         if(player.audio) {
@@ -726,7 +732,7 @@
         document.dispatchEvent(new CustomEvent("otd-diagnostic", { detail: JSON.stringify({
             kind: "spaces-player", state: player.state || "stopped", error: player.error, recovered: player.recovered.slice(-3),
             chat: chat.status, captionsAsked: chat.asked, captions: chat.captions, messages: [...chat.shapes.keys()], answers: chat.answers,
-            metadata: [...metadata].map(([kind, n]) => `${kind} ×${n}`), participant: participantShape,
+            metadata: [...metadata].map(([kind, n]) => `${kind} ×${n}`), participant: participantShape, space: spaceShape, hydra: hydraStats(),
         }) }));
     }
 
@@ -738,6 +744,7 @@
         let heard = false;
         for(const sample of samples || []) {
             for(const frame of id3Frames(sample?.data)) {
+                if(frame.id === "TXXX" && HYDRA.includes(frame.label)) heardHydra(frame.label, json(frame.raw), Number(sample.pts));
                 const kind = `${frame.id}${frame.label ? `(${frame.label.slice(0, 60)})` : ""}:${frame.value}`.slice(0, 200);
                 if(!metadata.has(kind) && metadata.size >= 12) continue;
                 metadata.set(kind, (metadata.get(kind) || 0) + 1);
@@ -786,10 +793,119 @@
             const encoding = body[0], wide = encoding === 1 || encoding === 2;
             let zero = 1;
             while(zero < body.length && !(body[zero] === 0 && (!wide || body[zero + 1] === 0))) zero += wide ? 2 : 1;
-            return { id, label: text(body.subarray(1, zero), encoding), value: valueOf(text(body.subarray(zero + (wide ? 2 : 1)), id === "WXXX" ? 0 : encoding)) };
+            const raw = text(body.subarray(zero + (wide ? 2 : 1)), id === "WXXX" ? 0 : encoding);
+            return { id, label: text(body.subarray(1, zero), encoding), value: valueOf(raw), raw };
         }
         if(id[0] === "T") return { id, label: "", value: valueOf(text(body.subarray(1), body[0])) };
         return { id, label: "", value: `bytes(${body.length})` };
+    }
+
+    // --- who's on stage and who speaks, from the stream ----------------------------------------------------------
+    // X's stream carries them in its chunks' ID3 tags, as x.com shows them: TXXX "HydraParticipants", the ones on
+    // stage, [{ ParticipantIndex, UserName, UserId, ProfileUrl }], with each chunk, and TXXX "HydraAudioLevel", how
+    // loud each of them is, a few times a second. Each has its time in the stream (hls.js's pts), so it's applied as
+    // the audio gets there. Someone speaks while they're loud next to the loudest of the last seconds, and a moment
+    // after.
+    const HYDRA = ["HydraParticipants", "HydraAudioLevel"];
+    const SPOKE_FOR = 700;
+    const hydra = { queue: [], participants: [], spoke: new Map(), loudest: null, peak: 0, peakAt: 0, timer: 0, stats: null };
+    function resetHydra() {
+        clearInterval(hydra.timer);
+        Object.assign(hydra, { queue: [], participants: [], spoke: new Map(), loudest: null, peak: 0, peakAt: 0, timer: 0,
+            stats: { levels: 0, lengths: new Set(), min: Infinity, max: -Infinity, offClock: false } });
+    }
+    resetHydra();
+    function heardHydra(kind, value, pts) {
+        if(!Array.isArray(value) || !Number.isFinite(pts)) return;
+        // in the order of their times in the stream, whatever order they came in: one far ahead holds up none after it
+        const queue = hydra.queue;
+        queue.push({ kind, value, pts });
+        if(queue.length > 1 && queue[queue.length - 2].pts > pts) queue.sort((a, b) => a.pts - b.pts);
+        if(queue.length > 400) queue.splice(0, queue.length - 400);
+        if(!hydra.timer) hydra.timer = setInterval(hydraTick, 150);
+    }
+    // what the audio has got to; what's far behind it dropped, what's far ahead of it, on another clock, taken as
+    // it comes
+    function hydraTick() {
+        const audio = player.audio;
+        if(!audio || !player.space) return;
+        const at = audio.currentTime;
+        let applied = false;
+        while(hydra.queue.length) {
+            const ahead = hydra.queue[0].pts - at;
+            if(ahead > 0.05 && ahead < 30) break;
+            const item = hydra.queue.shift();
+            if(ahead < -5) continue;
+            if(ahead >= 30) hydra.stats.offClock = true;
+            applyHydra(item);
+            applied = true;
+        }
+        if(applied || hydra.spoke.size) drawSpeaking();
+    }
+    function applyHydra({ kind, value }) {
+        if(kind === "HydraParticipants") {
+            hydra.participants = value.filter(p => p && typeof p === "object" && p.UserName).map(p => ({
+                index: Number(p.ParticipantIndex), screenName: String(p.UserName), id: String(p.UserId || ""), avatar: String(p.ProfileUrl || ""),
+            })).sort((a, b) => a.index - b.index);
+            return;
+        }
+        const levels = value.map(Number);
+        const stats = hydra.stats;
+        stats.levels++;
+        if(stats.lengths.size < 6) stats.lengths.add(levels.length);
+        for(const level of levels) if(Number.isFinite(level)) {
+            stats.min = Math.min(stats.min, level);
+            stats.max = Math.max(stats.max, level);
+        }
+        const people = hydra.participants;
+        if(!people.length) return;
+        // by place in the list where there's one level for each of them, by their index otherwise; decibels as power
+        const loudness = (person, i) => {
+            const level = levels.length === people.length ? levels[i] : levels[person.index];
+            return !Number.isFinite(level) ? 0 : level < 0 ? 10 ** (level / 20) : level;
+        };
+        const now = performance.now();
+        const loud = people.map((person, i) => ({ person, level: loudness(person, i) }));
+        const top = Math.max(0, ...loud.map(l => l.level));
+        if(top > hydra.peak || now - hydra.peakAt > 8000) {
+            hydra.peak = Math.max(top, hydra.peak * 0.5);
+            hydra.peakAt = now;
+        }
+        let loudest = null;
+        for(const { person, level } of loud) {
+            if(!(level > 0 && level >= 0.3 * hydra.peak)) continue;
+            hydra.spoke.set(person.screenName.toLowerCase(), now);
+            if(!loudest || level > loudest.level) loudest = { person, level };
+        }
+        if(loudest) hydra.loudest = { username: loudest.person.screenName.toLowerCase(), at: now };
+    }
+    const spokeNow = username => performance.now() - (hydra.spoke.get(username) ?? -Infinity) < SPOKE_FOR;
+    // the one speaking by the stream: the loudest of late, named as AudioSpaceById has them
+    function hydraSpeaker() {
+        const loudest = hydra.loudest;
+        if(!loudest || !spokeNow(loudest.username)) return null;
+        const known = known_(loudest.username);
+        return { username: loudest.username, name: known?.name || `@${hydra.participants.find(p => p.screenName.toLowerCase() === loudest.username)?.screenName || loudest.username}` };
+    }
+    const known_ = username => {
+        const space = player.space;
+        return space && [space.host, ...space.admins, ...space.speakers, ...space.listeners].filter(Boolean).find(p => p.screenName && p.screenName.toLowerCase() === username);
+    };
+    // who's on stage: as the stream has them, its order, their names as AudioSpaceById has them; as AudioSpaceById has
+    // them where the stream doesn't tell
+    function liveStage() {
+        if(!hydra.participants.length) return stage();
+        return hydra.participants.map(p => {
+            const known = known_(p.screenName.toLowerCase());
+            return { id: p.id || known?.id || p.screenName, screenName: p.screenName, name: known?.name || `@${p.screenName}`, avatar: p.avatar || known?.avatar || "" };
+        });
+    }
+    // for the diagnostics: how many on stage and their indexes, how many levels came, how long each was, from what to what
+    function hydraStats() {
+        const stats = hydra.stats;
+        if(!hydra.participants.length && !stats.levels) return "";
+        const range = stats.levels ? `, ${+stats.min.toFixed(3)}…${+stats.max.toFixed(3)}` : "";
+        return `${hydra.participants.length} on stage (indexes ${hydra.participants.map(p => p.index).join(",")}), levels ×${stats.levels} of ${[...stats.lengths].join("/") || "—"} each${range}${stats.offClock ? ", on another clock" : ""}`;
     }
 
     // --- the Space's chat: who speaks, what they say -----------------------------------------------------------
@@ -854,7 +970,7 @@
         if(Array.isArray(value)) return `[${value.length ? shape(value[0], depth + 1) : ""}]`;
         if(value && typeof value === "object") {
             if(depth > 2) return "{…}";
-            return `{${Object.entries(value).slice(0, 24).map(([key, v]) => `${key.slice(0, 40)}:${shape(v, depth + 1)}`).join(",")}}`;
+            return `{${Object.entries(value).slice(0, 80).map(([key, v]) => `${key.slice(0, 40)}:${shape(v, depth + 1)}`).join(",")}}`;
         }
         if(typeof value === "string") {
             const address = value.match(/^(https?|wss?):\/\/([\w.-]+)/);
@@ -1130,7 +1246,7 @@
     // what changes as people speak: the state's line, the faces on stage, the caption
     function drawSpeaking(box = document.querySelector(".otd-space-player")) {
         if(!box || !player.space) return;
-        const space = player.space, state = player.state, speaker = state === "playing" ? chat.speaker : null;
+        const space = player.space, state = player.state, speaker = state === "playing" ? chat.speaker || hydraSpeaker() : null;
         const said = state === "failed" ? T.cantPlay(player.error) : state === "ended" ? T.ended : state === "paused" ? T.paused
             : state === "connecting" ? T.connecting : speaker ? T.speaking(speaker.name) : space.host?.name ? `${T.playing} · ${space.host.name}` : T.playing;
         const line = box.querySelector(".otd-space-player-state");
@@ -1139,21 +1255,23 @@
 
         // the faces: drawn again when who's on stage changes, the one speaking marked
         const people = box.querySelector(".otd-space-player-stage");
-        const onStage = state === "ended" ? [] : stage();
+        const onStage = state === "ended" ? [] : liveStage();
         const who = onStage.map(p => `${p.id}:${p.avatar}:${p.name}`).join("|");
         if(people.dataset.who !== who) {
             people.dataset.who = who;
             people.replaceChildren(...onStage.slice(0, 10).map(p => {
                 const face = el("span", "otd-space-player-face");
                 face.dataset.username = p.screenName.toLowerCase();
-                face.title = p.screenName ? `${p.name} @${p.screenName}` : p.name;
+                face.title = p.screenName && !p.name.startsWith("@") ? `${p.name} @${p.screenName}` : p.name;
                 face.append(avatar(p.avatar));
                 return face;
             }));
             if(onStage.length > 10) people.append(el("span", "otd-space-player-more", `+${onStage.length - 10}`));
         }
         people.hidden = !onStage.length;
-        for(const face of people.querySelectorAll(".otd-space-player-face")) face.classList.toggle("is-speaking", !!speaker && face.dataset.username === speaker.username);
+        for(const face of people.querySelectorAll(".otd-space-player-face")) {
+            face.classList.toggle("is-speaking", state === "playing" && (spokeNow(face.dataset.username) || face.dataset.username === chat.speaker?.username));
+        }
 
         // the captions: the last one under the faces, its end when it's long, for a while after it's said; or
         // across the column, what was said before over it, kept to scroll back in
