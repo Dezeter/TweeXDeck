@@ -814,17 +814,17 @@
 
     // --- who's on stage and who speaks, from the stream ----------------------------------------------------------
     // X's stream carries them in its chunks' ID3 tags, as x.com shows them: TXXX "HydraParticipants", the ones on
-    // stage, [{ ParticipantIndex, UserName, UserId, ProfileUrl }], with each chunk, and TXXX "HydraAudioLevel", how
-    // loud each of them is, a few times a second. Each has its time in the stream (hls.js's pts), so it's applied as
-    // the audio gets there. Someone speaks while they're loud next to the loudest of the last seconds, and a moment
-    // after.
+    // stage with the host, [{ ParticipantIndex, UserName, UserId, ProfileUrl }], with each chunk, and TXXX
+    // "HydraAudioLevel", how loud each is, a few times a second: the host's first, then theirs in the list's order,
+    // where the host isn't in it, as X's is. Each has its time in the stream (hls.js's pts), so it's applied as the
+    // audio gets there. Someone speaks while they're loud next to the loudest of the last seconds, and a moment after.
     const HYDRA = ["HydraParticipants", "HydraAudioLevel"];
     const SPOKE_FOR = 700;
     const hydra = { queue: [], participants: [], spoke: new Map(), loudest: null, peak: 0, peakAt: 0, timer: 0, stats: null };
     function resetHydra() {
         clearInterval(hydra.timer);
         Object.assign(hydra, { queue: [], participants: [], spoke: new Map(), loudest: null, peak: 0, peakAt: 0, timer: 0,
-            stats: { levels: 0, lengths: new Set(), min: Infinity, max: -Infinity, offClock: false } });
+            stats: { levels: 0, lengths: new Set(), ways: new Set(), min: Infinity, max: -Infinity, offClock: false } });
     }
     resetHydra();
     function heardHydra(kind, value, pts) {
@@ -856,9 +856,11 @@
     }
     function applyHydra({ kind, value }) {
         if(kind === "HydraParticipants") {
+            // in the list's order, which the levels are in; ParticipantIndex is a number of X's, as big as 2142652186
             hydra.participants = value.filter(p => p && typeof p === "object" && p.UserName).map(p => ({
                 index: Number(p.ParticipantIndex), screenName: String(p.UserName), id: String(p.UserId || ""), avatar: String(p.ProfileUrl || ""),
-            })).sort((a, b) => a.index - b.index);
+            }));
+            newcomers();
             return;
         }
         const levels = value.map(Number);
@@ -871,13 +873,17 @@
         }
         const people = hydra.participants;
         if(!people.length) return;
-        // by place in the list where there's one level for each of them, by their index otherwise; decibels as power
-        const loudness = (person, i) => {
-            const level = levels.length === people.length ? levels[i] : levels[person.index];
-            return !Number.isFinite(level) ? 0 : level < 0 ? 10 ** (level / 20) : level;
-        };
+        // one level for each of them: by place in the list; one more, the host not in it: the host's first, then
+        // theirs; else by their indexes, where they're small enough; decibels as power
+        const host = hydraHost();
+        const way = levels.length === people.length ? "by place" : levels.length === people.length + 1 ? (host ? "the host's first" : "the first one no one's")
+            : people.every(p => p.index >= 0 && p.index < levels.length) ? "by index" : "unmatched";
+        if(stats.ways.size < 4) stats.ways.add(way);
+        const power = level => !Number.isFinite(level) ? 0 : level < 0 ? 10 ** (level / 20) : level;
+        const loud = people.map((person, i) => ({ person,
+            level: power(way === "by place" ? levels[i] : way === "by index" ? levels[person.index] : way === "unmatched" ? NaN : levels[i + 1]) }));
+        if(way === "the host's first") loud.unshift({ person: host, level: power(levels[0]) });
         const now = performance.now();
-        const loud = people.map((person, i) => ({ person, level: loudness(person, i) }));
         const top = Math.max(0, ...loud.map(l => l.level));
         if(top > hydra.peak || now - hydra.peakAt > 8000) {
             hydra.peak = Math.max(top, hydra.peak * 0.5);
@@ -899,6 +905,28 @@
         const known = known_(loudest.username);
         return { username: loudest.username, name: known?.name || `@${hydra.participants.find(p => p.screenName.toLowerCase() === loudest.username)?.screenName || loudest.username}` };
     }
+    // someone on stage AudioSpaceById hasn't told of yet: asked again for their name, as x.com does when someone
+    // comes up, once in 15 s at most
+    let newcomersAt = -Infinity;
+    function newcomers() {
+        const space = player.space, token = player.token;
+        if(!space || !token || performance.now() - newcomersAt < 15000) return;
+        if(hydra.participants.every(p => known_(p.screenName.toLowerCase()))) return;
+        newcomersAt = performance.now();
+        details(space.id, player.user).then(fresh => {
+            if(player.token !== token) return;
+            heard(fresh);
+            drawSpeaking();
+        }).catch(e => console.warn("[otd-spaces] AudioSpaceById", e));
+    }
+    // the Space's host, as AudioSpaceById has them, where the stream's list of the ones on stage doesn't have them
+    function hydraHost() {
+        const host = player.space?.host;
+        if(!host?.screenName) return null;
+        const name = host.screenName.toLowerCase();
+        return hydra.participants.some(p => p.screenName.toLowerCase() === name || (host.id && p.id === host.id)) ? null
+            : { index: -1, screenName: host.screenName, id: host.id || "", avatar: host.avatar || "" };
+    }
     const known_ = username => {
         const space = player.space;
         return space && [space.host, ...space.admins, ...space.speakers, ...space.listeners].filter(Boolean).find(p => p.screenName && p.screenName.toLowerCase() === username);
@@ -907,7 +935,8 @@
     // them where the stream doesn't tell
     function liveStage() {
         if(!hydra.participants.length) return stage();
-        return hydra.participants.map(p => {
+        const host = hydraHost();
+        return [...host ? [host] : [], ...hydra.participants].map(p => {
             const known = known_(p.screenName.toLowerCase());
             return { id: p.id || known?.id || p.screenName, screenName: p.screenName, name: known?.name || `@${p.screenName}`, avatar: p.avatar || known?.avatar || "" };
         });
@@ -917,7 +946,7 @@
         const stats = hydra.stats;
         if(!hydra.participants.length && !stats.levels) return "";
         const range = stats.levels ? `, ${+stats.min.toFixed(3)}…${+stats.max.toFixed(3)}` : "";
-        return `${hydra.participants.length} on stage (indexes ${hydra.participants.map(p => p.index).join(",")}), levels ×${stats.levels} of ${[...stats.lengths].join("/") || "—"} each${range}${stats.offClock ? ", on another clock" : ""}`;
+        return `${hydra.participants.length} on stage (indexes ${hydra.participants.map(p => p.index).join(",")})${hydraHost() ? " and the host" : ""}, levels ×${stats.levels} of ${[...stats.lengths].join("/") || "—"} each${range}${stats.ways.size ? `, ${[...stats.ways].join("/")}` : ""}${stats.offClock ? ", on another clock" : ""}`;
     }
 
     // --- the Space's chat: who speaks, what they say -----------------------------------------------------------
