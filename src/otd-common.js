@@ -31,6 +31,8 @@
             label: { ru: "Переводить твиты через Grok", en: "Translate tweets with Grok" } },
         { key: "articlesTranslate", storage: "OTDarticlesTranslate", section: "translation",
             label: { ru: "Переводить статьи через Google", en: "Translate articles with Google" } },
+        { key: "spacesTranslate", storage: "OTDspacesTranslate", section: "translation",
+            label: { ru: "Переводить субтитры Спейсов через Google", en: "Translate Spaces captions with Google" } },
         { key: "hideHomeReplies", storage: "OTDhideHomeReplies", section: "columns",
             label: { ru: "Скрывать в домашних колонках ответы другим людям", en: "Hide replies to other people in home columns" } },
         { key: "groupNotifications", storage: "OTDgroupNotifications", section: "columns",

@@ -36,7 +36,7 @@
             pause: "Пауза", play: "Слушать", close: "Закрыть", volume: "Громкость", again: "Ещё раз",
             connecting: "Подключаемся…", playing: "В эфире", paused: "На паузе", ended: "Спейс закончился",
             cantPlay: status => `Не удалось подключиться (${status})`, noBrowser: "браузер не играет такой поток",
-            speaking: name => `Говорит ${name}`, captions: "Субтитры", stage: "На сцене", wide: "Субтитры во всю ширину колонки",
+            speaking: name => `Говорит ${name}`, captions: "Субтитры", stage: "На сцене", wide: "Субтитры во всю ширину колонки", translate: "Перевод субтитров",
         },
         en: {
             live: "Live", coming: "Coming up", liveBadge: "Live", comingBadge: "Scheduled",
@@ -57,7 +57,7 @@
             pause: "Pause", play: "Listen", close: "Close", volume: "Volume", again: "Try again",
             connecting: "Connecting…", playing: "Live", paused: "Paused", ended: "The Space has ended",
             cantPlay: status => `Couldn't connect (${status})`, noBrowser: "the browser doesn't play this stream",
-            speaking: name => `${name} is speaking`, captions: "Captions", stage: "On stage", wide: "Captions across the column",
+            speaking: name => `${name} is speaking`, captions: "Captions", stage: "On stage", wide: "Captions across the column", translate: "Translate captions",
         },
     };
     const LANG = LABELS[OTD.UI_LANG] ? OTD.UI_LANG : "en";
@@ -745,6 +745,7 @@
             kind: "spaces-player", state: player.state || "stopped", error: player.error, recovered: player.recovered.slice(-3),
             chat: chat.liveFailed ? `live chat ${chat.liveFailed}; ${chat.status}` : chat.via === "X's live chat" ? `live chat ${chat.status}` : chat.status, captionsAsked: chat.asked, captions: chat.captions, messages: [...chat.shapes.keys()], answers: chat.answers,
             metadata: [...metadata].map(([kind, n]) => `${kind} ×${n}`), participant: participantShape, space: spaceShape, hydra: hydraStats(),
+            translation: !translateOn() ? "off" : `${translation.done} to ${TRANSLATE_LANG}${translation.failed ? `, ${translation.failed} not (${translation.error})` : ""}`,
         }) }));
     }
 
@@ -1154,6 +1155,7 @@
     function closeChat() {
         const socket = chat.socket, live = chat.live;
         Object.assign(chat, { socket: null, live: null, token: null, speaker: null, caption: null, lines: [], pending: [], seen: new Map() });
+        translation.queue.length = 0;
         if(chat.status && chat.status !== "no chat token") chat.status = "closed";
         try {
             socket?.close();
@@ -1273,16 +1275,117 @@
     // a caption into what was said: the same one again as it's said, the whole of it so far, till it's final
     function addLine(caption) {
         const who = personById(caption.userId);
-        const line = { id: caption.id, userId: caption.userId, username: who.username, name: who.name, text: caption.text, final: caption.final };
+        const line = { id: caption.id, userId: caption.userId, username: who.username, name: who.name, text: caption.text, final: caption.final, at: caption.at };
         const same = caption.id ? chat.lines.find(l => l.id === caption.id) : null;
         const last = chat.lines.at(-1);
+        // said again: its translation is of what it was before
+        if(same && same.text !== line.text) delete same.translated;
         if(same) Object.assign(same, line);
         else if(!caption.id && last && last.username === line.username && !last.final) Object.assign(last, line);
         else chat.lines.push(line);
-        if(chat.lines.length > 60) chat.lines.splice(0, chat.lines.length - 60);
+        if(chat.lines.length > 80) chat.lines.splice(0, chat.lines.length - 80);
         if(!who.name) newcomers(true);
+        toTranslate(same || line);
         return same || line;
     }
+    // --- the captions translated -------------------------------------------------------------------------------
+    // With Google, as articles are, through the extension (content.js, the background script), Grok translating
+    // posts by their id only: a caption once it's final, to the translation language, many in one request, a line
+    // each; one already in that language stays as it is. Switch "spacesTranslate", the player's button too.
+    const TRANSLATE_LANG = OTD.targetLang();
+    const translateOn = () => OTD.isOn("spacesTranslate");
+    const translation = { queue: [], timer: 0, running: false, done: 0, failed: 0, error: "" };
+    let googleId = 0;
+    const googleWaiting = new Map();
+    window.addEventListener("message", e => {
+        const result = e.data?.otdGoogleTranslateResult;
+        if(e.source !== window || !result || !googleWaiting.has(result.id)) return;
+        googleWaiting.get(result.id)(result.response);
+        googleWaiting.delete(result.id);
+    });
+    function google(text) {
+        return new Promise((resolve, reject) => {
+            const id = `otd-spaces-${++googleId}`;
+            const timer = setTimeout(() => {
+                googleWaiting.delete(id);
+                reject(new Error("no answer from the extension"));
+            }, 20000);
+            googleWaiting.set(id, response => {
+                clearTimeout(timer);
+                if(!response || response.error) reject(new Error(response?.error || "empty answer"));
+                else resolve(response);
+            });
+            window.postMessage({ action: "otdGoogleTranslate", id, text, to: TRANSLATE_LANG }, "*");
+        });
+    }
+    const sameLanguage = lang => !lang || String(lang).split("-")[0].toLowerCase() === TRANSLATE_LANG;
+    function toTranslate(line) {
+        if(!translateOn() || !line.final || !line.text || line.translated !== undefined || translation.queue.includes(line)) return;
+        translation.queue.push(line);
+        if(!translation.timer && !translation.running) translation.timer = setTimeout(translateQueued, 150);
+    }
+    // a request is a GET, its address kept short of what Google takes
+    const MAX_QUERY = 3500;
+    async function translateQueued() {
+        translation.timer = 0;
+        translation.running = true;
+        while(translation.queue.length) {
+            const batch = [];
+            let size = 0;
+            while(translation.queue.length && (!batch.length || size + encodeURIComponent(translation.queue[0].text).length + 3 <= MAX_QUERY)) {
+                const line = translation.queue.shift();
+                size += encodeURIComponent(line.text).length + 3;
+                batch.push(line);
+            }
+            const texts = batch.map(line => line.text.replace(/\s+/g, " ").trim());
+            try {
+                const result = await google(texts.join("\n"));
+                let out = String(result.text || "").split("\n");
+                // Google merging or splitting lines: those one at a time
+                if(out.length !== batch.length) out = await Promise.all(texts.map(text => google(text).then(r => String(r.text || ""))));
+                // one in the translation language, or that Google gave back as it was, stays as it was said
+                batch.forEach((line, i) => {
+                    const translated = String(out[i] || "").trim();
+                    line.translated = sameLanguage(result.lang) || !translated || translated === texts[i] ? null : translated;
+                });
+                translation.done += batch.length;
+            } catch(e) {
+                // shown as they were said; the next ones tried again
+                for(const line of batch) line.translated = null;
+                translation.failed += batch.length;
+                translation.error = describe(e);
+            }
+            drawSpeaking();
+        }
+        translation.running = false;
+        report();
+    }
+    function translateAll() {
+        if(translateOn()) for(const line of chat.lines) toTranslate(line);
+        drawSpeaking();
+    }
+    OTD.onChange("OTDspacesTranslate", translateAll);
+    // what's said one after the other by the same person, in one, the name once: another person or a pause of 20 s
+    // begins another; each as translated where it is and the translation's on
+    const PAUSE = 20000;
+    function paragraphs(lines) {
+        const out = [];
+        let last = null;
+        for(const line of lines) {
+            const group = out.at(-1);
+            if(group && line.username === group.username && !(Number.isFinite(line.at) && Number.isFinite(last?.at) && line.at - last.at > PAUSE)) group.lines.push(line);
+            else out.push({ username: line.username, lines: [line] });
+            last = line;
+        }
+        return out.map(group => {
+            const first = group.lines[0];
+            const shown = group.lines.map(line => translateOn() && line.translated ? line.translated : line.text);
+            const original = group.lines.map(line => line.text).join(" ");
+            const text = shown.join(" ");
+            return { name: (first.userId && personById(first.userId).name) || first.name || "…", text, original: text === original ? "" : original };
+        });
+    }
+
     // someone by their X id: as AudioSpaceById has them, else as the stream's stage has them
     function personById(id) {
         const space = player.space;
@@ -1368,6 +1471,7 @@
         pause: '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="6" y="5" width="4.2" height="14" rx="1.2" fill="currentColor"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.2" fill="currentColor"/></svg>',
         close: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
         wide: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+        translate: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M3 5h9M7.5 3v2M10 5c-.8 3.6-3 6.4-6 8M5.5 8.5c1.2 2 2.8 3.6 4.8 4.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M12.5 21l4-10 4 10M14 17.5h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
         volume: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
     };
     function iconButton(className, label, icon) {
@@ -1433,7 +1537,12 @@
             });
             const wide = iconButton("otd-space-player-wide", T.wide, ICONS.wide);
             wide.addEventListener("click", () => wideCaptions());
-            bottom.append(volumeIcon, range, cc, wide, link("", "otd-space-player-open", T.open));
+            const translate = iconButton("otd-space-player-translate", T.translate, ICONS.translate);
+            translate.addEventListener("click", () => {
+                OTD.setOn("spacesTranslate", !translateOn());
+                translateAll();
+            });
+            bottom.append(volumeIcon, range, cc, wide, translate, link("", "otd-space-player-open", T.open));
             box.append(top, people, said, bottom);
             scroller.prepend(box);
         }
@@ -1492,8 +1601,8 @@
         const wide = captionsWide();
         box.classList.toggle("is-wide", wide);
         const lines = !captionsOn() || (state !== "playing" && !(wide && state === "paused")) ? []
-            : wide ? chat.lines.slice(-40) : chat.caption && chat.lines.length ? chat.lines.slice(-1) : [];
-        const shownLines = lines.map(line => ({ name: (line.userId && personById(line.userId).name) || line.name || "…", text: wide || line.text.length <= 160 ? line.text : `…${line.text.slice(-160)}` }));
+            : wide ? paragraphs(chat.lines.slice(-60)) : chat.caption && chat.lines.length ? paragraphs(chat.lines).slice(-1) : [];
+        const shownLines = lines.map(line => ({ name: line.name, original: line.original, text: wide || line.text.length <= 160 ? line.text : `…${line.text.slice(-160)}` }));
         const drawnNow = JSON.stringify([wide, shownLines]);
         if(caption.otdDrawn !== drawnNow) {
             caption.otdDrawn = drawnNow;
@@ -1502,6 +1611,8 @@
             caption.replaceChildren(...shownLines.map(line => {
                 const p = el("p", "otd-space-player-line");
                 p.append(el("b", "", `${line.name}:`), document.createTextNode(` ${line.text}`));
+                // what was said, where it's translated
+                if(line.original) p.title = line.original;
                 return p;
             }));
             if(atEnd || !wide) caption.scrollTop = caption.scrollHeight;
@@ -1515,6 +1626,9 @@
         // the buttons only once the Space has had captions
         cc.hidden = !chat.captions;
         wideButton.hidden = !chat.captions || !captionsOn();
+        const translateButton = box.querySelector(".otd-space-player-translate");
+        translateButton.setAttribute("aria-pressed", String(translateOn()));
+        translateButton.hidden = !chat.captions || !captionsOn();
     }
     function wideCaptions() {
         OTD.setValue(WIDE_STORAGE, captionsWide() ? "" : "1");
@@ -1624,9 +1738,9 @@
         /* across the column, edge to edge, what was said before over the last one */
         .otd-space-player.is-wide .otd-space-player-caption { max-height: min(45vh, 360px); margin: 10px -12px 0; padding: 8px 12px; overflow-y: auto; border-top: 1px solid var(--otd-line, rgba(0, 0, 0, .07)); border-bottom: 1px solid var(--otd-line, rgba(0, 0, 0, .07)); background: var(--otd-panel, #fff); font-size: 14px; cursor: zoom-out; overscroll-behavior: contain; }
         .otd-space-player.is-wide .otd-space-player-line + .otd-space-player-line { margin-top: 6px; }
-        :root .otd-space-player .otd-space-player-wide { width: 24px; height: 24px; margin: 0; border-radius: 4px; background: transparent; color: var(--otd-text-2, #657786); }
-        :root .otd-space-player .otd-space-player-wide:hover { background: var(--otd-ghost-hover, rgba(0, 0, 0, .08)); }
-        :root .otd-space-player .otd-space-player-wide[aria-pressed="true"] { color: var(--otd-accent, #1d9bf0); }
+        :root .otd-space-player :is(.otd-space-player-wide, .otd-space-player-translate) { width: 24px; height: 24px; margin: 0; border-radius: 4px; background: transparent; color: var(--otd-text-2, #657786); }
+        :root .otd-space-player :is(.otd-space-player-wide, .otd-space-player-translate):hover { background: var(--otd-ghost-hover, rgba(0, 0, 0, .08)); }
+        :root .otd-space-player :is(.otd-space-player-wide, .otd-space-player-translate)[aria-pressed="true"] { color: var(--otd-accent, #1d9bf0); }
         .otd-space-player a.otd-space-player-open { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--otd-accent, #1d9bf0); font-size: 12px; text-decoration: none; }
         .otd-space-player a.otd-space-player-open:hover { text-decoration: underline; }
     `);
