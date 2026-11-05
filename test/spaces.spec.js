@@ -739,7 +739,7 @@ test("who's on stage and who speaks by the stream itself: HydraParticipants and 
     await expect.poll(() => playerShown(page).then(p => p.state), { timeout: 8000 }).toBe("В эфире · Hana");
     expect(await stageShown(page)).toEqual(["Hana @hana", "Alice @alice", "@newbie"]);
     // for the diagnostics: how many on stage, their indexes, the levels' lengths and range
-    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).hydra)).toMatch(/^3 on stage \(indexes 0,1,2\), levels ×\d+ of 3 each, 0…0\.9$/);
+    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).hydra)).toMatch(/^3 on stage \(indexes 0,1,2\), levels ×\d+ of 3 each, 0…0\.9, by place$/);
 });
 
 test("the media choking, as Firefox's does now and then: hls.js gets it going again and it plays on, as it did", async ({ page }) => {
@@ -793,6 +793,45 @@ test("paused by the listener, a Space stays paused after the media chokes", asyn
     // its ▶ goes on
     await page.click(".otd-space-player-toggle");
     await expect.poll(async () => (await audio(page)).paused).toBe(false);
+});
+
+test("as X's stream has them: the host not in its list and the first level theirs, X's own big indexes, levels up to 100", async ({ page }) => {
+    await open(page);
+    await expect.poll(() => cards(page)).toBe(4);
+    await keptHls(page);
+    await listenButton(page, "1LiveAAAAAAAA").click();
+    await plays(page, 0.2);
+    // Hana, the host, isn't in the list; the levels are hers, then Alice's, then the newcomer's, in the list's order
+    const stage = [{ ...STAGE[1], ParticipantIndex: 1919683058 }, { ...STAGE[2], ParticipantIndex: 8330558 }];
+    await page.evaluate(stage => window.__metadata([["HydraParticipants", stage], ["HydraAudioLevel", [98, 0, 3]]], 0.1, 2), stage);
+    await expect.poll(() => stageShown(page)).toEqual(["Hana @hana *", "Alice @alice", "@newbie"]);
+    expect((await playerShown(page)).state).toBe("Говорит Hana");
+    await page.evaluate(() => window.__metadata([["HydraAudioLevel", [0, 0, 80]]], 0.05, 3));
+    await explained(page, expect.poll(() => stageShown(page), { timeout: 5000 }).toEqual(["Hana @hana", "Alice @alice", "@newbie *"]));
+    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).hydra)).toMatch(/^2 on stage \(indexes 1919683058,8330558\) and the host, levels ×\d+ of 3 each, 0…98, the host's first$/);
+});
+
+test("someone on stage AudioSpaceById hasn't told of: it's asked again, as x.com does, and they're named", async ({ page }) => {
+    // the newcomer, up on stage, in what AudioSpaceById answers once they are
+    const up = structuredClone(SPACES["1LiveAAAAAAAA"]);
+    up.data.audioSpace.participants.speakers.push(person("90", "Newbie"));
+    let cameUp = false;
+    const asked = await open(page, { answer: { space: id => [200, cameUp && id === "1LiveAAAAAAAA" ? up : SPACES[id] ?? { data: {} }] } });
+    await expect.poll(() => cards(page)).toBe(4);
+    await keptHls(page);
+    await listenButton(page, "1LiveAAAAAAAA").click();
+    await plays(page, 0.2);
+    const details = () => asked.filter(a => a.path.endsWith("/AudioSpaceById")).length;
+    const before = details();
+    cameUp = true;
+    await page.evaluate(stage => window.__metadata([["HydraParticipants", stage], ["HydraAudioLevel", [0, 0, 0]]], 0.1, 1), STAGE);
+    const named = () => stageShown(page).then(faces => faces.map(face => face.replace(/ \*$/, "")));
+    await expect.poll(named).toEqual(["Hana @hana", "Alice @alice", "Newbie @newbie"]);
+    expect(details()).toBe(before + 1);
+    // all of them known: not asked again
+    await page.evaluate(stage => window.__metadata([["HydraParticipants", stage]], 0.1, 1), STAGE);
+    await page.waitForTimeout(800);
+    expect(details()).toBe(before + 1);
 });
 
 test("levels by participants' indexes where there aren't as many as on stage", async ({ page }) => {
