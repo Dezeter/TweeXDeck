@@ -76,6 +76,7 @@ async function main() {
             load("/src/download-media.js"),
             load("/src/pause-on-hover.js"),
             load("/src/steady-columns.js"),
+            load("/src/fill-gaps.js"),
             load("/src/for-you.js"),
             load("/src/spaces.js"),
             load("/src/loading.js"),

@@ -36,7 +36,7 @@ test("TweeXDeck's tabs after TweetDeck's own, one for each section, a switch for
     expect(await page.$$eval("#otd-settings .otd-settings-section > label", labels => labels.map(l => l.textContent))).toEqual(["Внешний вид", "Перевод", "Колонки", "Твиты", "Медиа", "Написание", "Прочее"]);
     expect(await switches(page)).toEqual([
         ["lightsOut", false], ["svgIcons", true], ["modernLook", true], ["grokTranslate", true], ["articlesTranslate", true], ["hideHomeReplies", true], ["groupNotifications", true],
-        ["pauseOnHover", true], ["steadyColumns", true], ["selfThreads", true], ["threadsOldestFirst", true], ["skeletons", true], ["tabTitle", true], ["compactHeaders", true], ["loadAllReplies", true], ["instantReplies", true], ["articles", true], ["smartCashtags", true],
+        ["pauseOnHover", true], ["steadyColumns", true], ["fillGaps", true], ["selfThreads", true], ["threadsOldestFirst", true], ["skeletons", true], ["tabTitle", true], ["compactHeaders", true], ["loadAllReplies", true], ["instantReplies", true], ["articles", true], ["smartCashtags", true],
         ["cleanLinks", true], ["absoluteTime", false], ["redraft", true], ["muteFromMenu", true], ["rowMuteBlock", false],
         ["inlineVideo", true], ["downloadMedia", true], ["copyMediaLinks", true], ["pasteImages", false],
         ["emojiPicker", true], ["gifPicker", true], ["longPosts", true], ["blockServiceWorker", false], ["loadWatchdog", true],

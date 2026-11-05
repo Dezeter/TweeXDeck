@@ -23,7 +23,7 @@ This is an independently developed fork of [OldTweetDeck by dimden](https://gith
 - [Media as a small square beside the text](#media), a column's "Small" media previews, and single photos whole instead of TweetDeck's cropped strips; [videos that play right in the tweet](#media), and [downloading media](#media) or copying its links from the tweet menu
 - [Redrafting your tweet, muting a hashtag or an app](#tweet-menu) from the tweet menu, [Mute and Block buttons](#tweet-menu) under tweets
 - [Short headers](#columns): "↩ @name" for "Replying to", your own tweet in a notification without your name over it again, a notification's icon in the avatars' column
-- [A For you column](#columns), X's own picks beside your Home, [a Spaces column](#columns) with the live and coming Spaces of people you follow, to listen to right there, [super wide columns](#columns) of 400px, [flex columns that share the window](#columns), [columns that hold still](#columns) under the pointer, [an author's threads joined by a line](#columns), and [unread counts](#columns) in the tab title
+- [A For you column](#columns), X's own picks beside your Home, [a Spaces column](#columns) with the live and coming Spaces of people you follow, to listen to right there, [super wide columns](#columns) of 400px, [flex columns that share the window](#columns), [columns that hold still](#columns) under the pointer, [no "Show more"](#columns) in them, [an author's threads joined by a line](#columns), and [unread counts](#columns) in the tab title
 - [Tweet shapes while a column loads](#loading-and-empty-columns), and a plain message with a button when it's empty or X didn't answer
 - [Emoji and GIF pickers](#emoji-and-gifs) in the tweet box, and [long posts](#long-posts) up to 25,000 characters
 - [An explanation instead of an endless spinner](#when-tweetdeck-doesnt-load) when TweetDeck doesn't load, with a report to copy into an issue
@@ -90,6 +90,7 @@ The same settings are kept in `localStorage`, so they can also be changed from t
 | Grouping notifications | `OTDgroupNotifications` |
 | Holding a column under the pointer | `OTDpauseOnHover` |
 | A column that doesn't jump | `OTDsteadyColumns` |
+| No "Show more" in columns | `OTDfillGaps` |
 | An author's threads without "Replying to @author", joined by a line | `OTDselfThreads` |
 | An author's threads in a column from the first tweet down | `OTDthreadsOldestFirst` |
 | Unread in the tab title | `OTDtabTitle` |
@@ -219,6 +220,8 @@ After them, **Flex**: columns that share the window, each from 310 up to 480px, 
 A column scrolled to the top doesn't move down with new tweets while the pointer is over it, so the tweet you're reading stays where it is. TweetDeck's "N New Tweets" over the column counts the ones that came; it, or a scroll to the top, brings them in, and with the pointer still over the column it holds still again.
 
 A column scrolled down doesn't jump either when TweetDeck adds or drops tweets above what you're reading. TweetDeck kept a column to 40 tweets, so past them every page of older tweets dropped 20 at the top, and it put the column back from the scroll position it last heard of; when that was out of date and the browser didn't keep the position itself (Firefox stops doing that for a column after many changes), the column jumped by hours of tweets. Now a column keeps 200 tweets, and after such a change the tweet that was on the screen is put back where it was.
+
+There's no "Show more" in a column either. TweetDeck put one where what it loaded didn't reach the tweets it had, to click for the rest; through X's GraphQL it often hid nothing. Now the rest loads by itself, at once, in its place, and the tweet you're reading stays where it is. A column that wakes up after a long sleep doesn't load hundreds of pages to fill the hole: after five pages in a row it lets the rest go, as it does a page X doesn't answer.
 
 A thread, where the author replies to themselves, looks the way TweetDeck showed it before X stopped marking such tweets: no "Replying to @author" over its tweets, and "Show this thread" under their text, over the buttons. Tweets of a thread right next to each other in a column are joined by a line between the avatars and read from the first one down, the way they were written, in the place the newest of them has in the column; switched off, they stay newest on top like the rest of the column.
 
