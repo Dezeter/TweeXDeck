@@ -541,8 +541,8 @@
     // --- listening --------------------------------------------------------------------------------------------
     // the Space playing, the column it was started from and its account, and how it goes: connecting, playing,
     // paused, ended, failed
-    // recovered: the media errors hls.js got the media going again after
-    const player = { space: null, column: "", user: "", state: "", error: "", chatToken: "", audio: null, hls: null, token: null, pausedAt: 0, recovered: [], recoveredAt: -Infinity };
+    // recovered: the media errors hls.js got the media going again after; recoveries: how many in a row
+    const player = { space: null, column: "", user: "", state: "", error: "", chatToken: "", audio: null, hls: null, token: null, pausedAt: 0, recovered: [], recoveredAt: -Infinity, recoveries: 0 };
     const VOLUME_STORAGE = "OTDspacesVolume";
     const volume = () => {
         const value = Number(localStorage[VOLUME_STORAGE]);
@@ -611,7 +611,7 @@
         const audio = audioElement();
         audio.volume = volume();
         const token = {};
-        Object.assign(player, { space, column: column.key, user: column.user, state: "connecting", error: "", chatToken: "", token, recovered: [], recoveredAt: -Infinity });
+        Object.assign(player, { space, column: column.key, user: column.user, state: "connecting", error: "", chatToken: "", token, recovered: [], recoveredAt: -Infinity, recoveries: 0 });
         metadata.clear();
         resetHydra();
         changed();
@@ -631,13 +631,24 @@
                 const hls = player.hls = new Hls({ liveDurationInfinity: true });
                 hls.on(Hls.Events.ERROR, (event, data) => {
                     if(!data?.fatal || player.token !== token) return;
-                    const what = `${data.details || data.type}${data.error?.message ? `: ${data.error.message}` : ""}`.slice(0, 100);
-                    // the media choking now and then, as hls.js's own docs have it: it gets the media going again, once
-                    // in a while; again soon after, the player says so
-                    if(data.type === Hls.ErrorTypes.MEDIA_ERROR && performance.now() - player.recoveredAt > 10000) {
-                        player.recoveredAt = performance.now();
+                    // what hls.js says, and the audio element's own error that's often behind it: a chunk it couldn't
+                    // append as the browser had given up on the media
+                    const media = audio.error ? ` [media ${audio.error.code}${audio.error.message ? ` ${audio.error.message}` : ""}]` : "";
+                    const what = `${data.details || data.type}${media}${data.error?.message ? `: ${data.error.message}` : ""}`.slice(0, 160);
+                    // the media choking now and then, as hls.js's own docs have it: it gets the media going again, three
+                    // times in a row; a fourth, before half a minute has gone without one, and the player says so
+                    const now = performance.now();
+                    if(now - player.recoveredAt > 30000) player.recoveries = 0;
+                    if(data.type === Hls.ErrorTypes.MEDIA_ERROR && player.recoveries < 3) {
+                        player.recoveries++;
+                        player.recoveredAt = now;
                         player.recovered.push(what);
                         report();
+                        // the media taken back pauses the audio without a word, as a browser loading it does: unless the
+                        // listener paused it, it plays on once hls.js has it again
+                        if(player.state !== "paused") hls.once(Hls.Events.MEDIA_ATTACHED, () => {
+                            if(player.token === token && player.audio === audio) audio.play().catch(e => console.warn("[otd-spaces]", e));
+                        });
                         hls.recoverMediaError();
                         return;
                     }
@@ -661,7 +672,8 @@
                 if(player.token === token && e?.name === "NotAllowedError") {
                     player.state = "paused";
                     changed();
-                } else throw e;
+                // the media choked before it began, taken back by hls.js, which plays it then
+                } else if(!(player.token === token && e?.name === "AbortError" && player.recovered.length)) throw e;
             }
         } catch(e) {
             if(player.token === token) fail(describe(e));

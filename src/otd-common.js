@@ -39,6 +39,8 @@
             label: { ru: "Не сдвигать колонку новыми твитами, пока над ней курсор", en: "Don't push a column down with new tweets while the pointer is over it" } },
         { key: "steadyColumns", storage: "OTDsteadyColumns", section: "columns",
             label: { ru: "Колонка не прыгает, когда TweetDeck подгружает или убирает твиты выше того, что читаешь", en: "A column doesn't jump when TweetDeck loads or drops tweets above what you're reading" } },
+        { key: "fillGaps", storage: "OTDfillGaps", section: "columns",
+            label: { ru: "Без «Show more»: пропуск в колонке догружается сам, на своём месте, лента не сдвигается", en: "No \"Show more\": a gap in a column loads by itself, in its place, the timeline stays put" } },
         { key: "selfThreads", storage: "OTDselfThreads", section: "columns",
             label: { ru: "Треды автора: без «Replying to @автор», соседние твиты треда соединены линией", en: "Author's threads: no \"Replying to @author\", neighbouring tweets of a thread joined by a line" } },
         { key: "threadsOldestFirst", storage: "OTDthreadsOldestFirst", section: "columns",
