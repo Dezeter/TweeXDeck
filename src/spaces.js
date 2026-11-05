@@ -1235,7 +1235,7 @@
     function heardLive(line) {
         if(!line || typeof line !== "object") return;
         // what kinds come, for the diagnostics: the kind, a control's kind, the fields' names
-        const shape = `live ${line.chatType ?? "?"}${line.controlType != null ? `/${line.controlType}` : ""}:${Object.keys(line).sort().join(",")}`.slice(0, 120);
+        const shape = `live ${line.chatType ?? "?"}${line.controlType != null ? `/${line.controlType}` : ""}${line.final === false ? " as it's said" : ""}:${Object.keys(line).sort().join(",")}`.slice(0, 120);
         if(!chat.shapes.has(shape) && chat.shapes.size < 12) {
             chat.shapes.set(shape, true);
             report();
@@ -1278,15 +1278,15 @@
         const line = { id: caption.id, userId: caption.userId, username: who.username, name: who.name, text: caption.text, final: caption.final, at: caption.at };
         const same = caption.id ? chat.lines.find(l => l.id === caption.id) : null;
         const last = chat.lines.at(-1);
-        // said again: its translation is of what it was before
-        if(same && same.text !== line.text) delete same.translated;
-        if(same) Object.assign(same, line);
-        else if(!caption.id && last && last.username === line.username && !last.final) Object.assign(last, line);
+        // one still being said goes on in the same person's next, whatever its id; its translation is kept till the
+        // new one comes
+        const going = !same && last && last.username === line.username && !last.final ? last : null;
+        if(same || going) Object.assign(same || going, line);
         else chat.lines.push(line);
         if(chat.lines.length > 80) chat.lines.splice(0, chat.lines.length - 80);
         if(!who.name) newcomers(true);
-        toTranslate(same || line);
-        return same || line;
+        toTranslate(same || going || line);
+        return same || going || line;
     }
     // --- the captions translated -------------------------------------------------------------------------------
     // With Google, as articles are, through the extension (content.js, the background script), Grok translating
@@ -1319,10 +1319,22 @@
         });
     }
     const sameLanguage = lang => !lang || String(lang).split("-")[0].toLowerCase() === TRANSLATE_LANG;
+    // as it's said, once a second at most, and once it's final; one in the translation language not again
+    const AS_SAID_EVERY = 1000;
+    const plain = text => String(text || "").replace(/\s+/g, " ").trim();
     function toTranslate(line) {
-        if(!translateOn() || !line.final || !line.text || line.translated !== undefined || translation.queue.includes(line)) return;
+        if(!translateOn() || !plain(line.text) || line.sameLanguage || line.translatedFrom === plain(line.text) || translation.queue.includes(line) || !chat.lines.includes(line)) return;
+        const wait = line.final ? 0 : (line.askedAt || -Infinity) + AS_SAID_EVERY - performance.now();
+        if(wait > 0) {
+            if(!line.again) line.again = setTimeout(() => {
+                line.again = 0;
+                toTranslate(line);
+            }, wait);
+            return;
+        }
+        line.askedAt = performance.now();
         translation.queue.push(line);
-        if(!translation.timer && !translation.running) translation.timer = setTimeout(translateQueued, 150);
+        if(!translation.timer && !translation.running) translation.timer = setTimeout(translateQueued, 100);
     }
     // a request is a GET, its address kept short of what Google takes
     const MAX_QUERY = 3500;
@@ -1337,7 +1349,7 @@
                 size += encodeURIComponent(line.text).length + 3;
                 batch.push(line);
             }
-            const texts = batch.map(line => line.text.replace(/\s+/g, " ").trim());
+            const texts = batch.map(line => plain(line.text));
             try {
                 const result = await google(texts.join("\n"));
                 let out = String(result.text || "").split("\n");
@@ -1346,15 +1358,20 @@
                 // one in the translation language, or that Google gave back as it was, stays as it was said
                 batch.forEach((line, i) => {
                     const translated = String(out[i] || "").trim();
-                    line.translated = sameLanguage(result.lang) || !translated || translated === texts[i] ? null : translated;
+                    const same = sameLanguage(result.lang) || !translated || translated === texts[i];
+                    line.translated = same ? null : translated;
+                    line.translatedFrom = texts[i];
+                    if(sameLanguage(result.lang) || (same && line.final)) line.sameLanguage = true;
                 });
                 translation.done += batch.length;
             } catch(e) {
                 // shown as they were said; the next ones tried again
-                for(const line of batch) line.translated = null;
+                for(const line of batch) line.translatedFrom = plain(line.text);
                 translation.failed += batch.length;
                 translation.error = describe(e);
             }
+            // said on while it was asked: that too
+            for(const line of batch) if(plain(line.text) !== line.translatedFrom) toTranslate(line);
             drawSpeaking();
         }
         translation.running = false;
@@ -1365,24 +1382,17 @@
         drawSpeaking();
     }
     OTD.onChange("OTDspacesTranslate", translateAll);
-    // what's said one after the other by the same person, in one, the name once: another person or a pause of 20 s
-    // begins another; each as translated where it is and the translation's on
+    // what's said, a line for each phrase as it's said, the name over the first of one person's one after the other:
+    // another person, or a pause of 20 s, and the name again; each as translated where it is and the translation's on
     const PAUSE = 20000;
-    function paragraphs(lines) {
-        const out = [];
+    const nameOf = line => (line.userId && personById(line.userId).name) || line.name || "…";
+    function captionLines(lines) {
         let last = null;
-        for(const line of lines) {
-            const group = out.at(-1);
-            if(group && line.username === group.username && !(Number.isFinite(line.at) && Number.isFinite(last?.at) && line.at - last.at > PAUSE)) group.lines.push(line);
-            else out.push({ username: line.username, lines: [line] });
+        return lines.map(line => {
+            const first = !last || line.username !== last.username || (Number.isFinite(line.at) && Number.isFinite(last.at) && line.at - last.at > PAUSE);
             last = line;
-        }
-        return out.map(group => {
-            const first = group.lines[0];
-            const shown = group.lines.map(line => translateOn() && line.translated ? line.translated : line.text);
-            const original = group.lines.map(line => line.text).join(" ");
-            const text = shown.join(" ");
-            return { name: (first.userId && personById(first.userId).name) || first.name || "…", text, original: text === original ? "" : original };
+            const text = translateOn() && line.translated ? line.translated : line.text;
+            return { name: first ? nameOf(line) : "", text, original: text === line.text ? "" : line.text };
         });
     }
 
@@ -1600,8 +1610,9 @@
         const caption = box.querySelector(".otd-space-player-caption");
         const wide = captionsWide();
         box.classList.toggle("is-wide", wide);
+        // under the faces the last one, by its name
         const lines = !captionsOn() || (state !== "playing" && !(wide && state === "paused")) ? []
-            : wide ? paragraphs(chat.lines.slice(-60)) : chat.caption && chat.lines.length ? paragraphs(chat.lines).slice(-1) : [];
+            : wide ? captionLines(chat.lines.slice(-80)) : chat.caption && chat.lines.length ? captionLines(chat.lines.slice(-1)) : [];
         const shownLines = lines.map(line => ({ name: line.name, original: line.original, text: wide || line.text.length <= 160 ? line.text : `…${line.text.slice(-160)}` }));
         const drawnNow = JSON.stringify([wide, shownLines]);
         if(caption.otdDrawn !== drawnNow) {
@@ -1610,7 +1621,11 @@
             const atEnd = caption.scrollTop + caption.clientHeight >= caption.scrollHeight - 4;
             caption.replaceChildren(...shownLines.map(line => {
                 const p = el("p", "otd-space-player-line");
-                p.append(el("b", "", `${line.name}:`), document.createTextNode(` ${line.text}`));
+                if(line.name) p.append(el("b", "", `${line.name}:`), document.createTextNode(` ${line.text}`));
+                else {
+                    p.classList.add("is-continued");
+                    p.textContent = line.text;
+                }
                 // what was said, where it's translated
                 if(line.original) p.title = line.original;
                 return p;
@@ -1738,6 +1753,7 @@
         /* across the column, edge to edge, what was said before over the last one */
         .otd-space-player.is-wide .otd-space-player-caption { max-height: min(45vh, 360px); margin: 10px -12px 0; padding: 8px 12px; overflow-y: auto; border-top: 1px solid var(--otd-line, rgba(0, 0, 0, .07)); border-bottom: 1px solid var(--otd-line, rgba(0, 0, 0, .07)); background: var(--otd-panel, #fff); font-size: 14px; cursor: zoom-out; overscroll-behavior: contain; }
         .otd-space-player.is-wide .otd-space-player-line + .otd-space-player-line { margin-top: 6px; }
+        .otd-space-player.is-wide .otd-space-player-line + .otd-space-player-line.is-continued { margin-top: 2px; }
         :root .otd-space-player :is(.otd-space-player-wide, .otd-space-player-translate) { width: 24px; height: 24px; margin: 0; border-radius: 4px; background: transparent; color: var(--otd-text-2, #657786); }
         :root .otd-space-player :is(.otd-space-player-wide, .otd-space-player-translate):hover { background: var(--otd-ghost-hover, rgba(0, 0, 0, .08)); }
         :root .otd-space-player :is(.otd-space-player-wide, .otd-space-player-translate)[aria-pressed="true"] { color: var(--otd-accent, #1d9bf0); }

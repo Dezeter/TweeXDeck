@@ -680,11 +680,11 @@ test("captions from X's live chat, as x.com has them now: what was said before k
     expect(told.chat).toMatch(/^live chat (open|reconnecting)$/);
     expect(told.messages).toEqual([
         "live 2:chatType,isBackfill,message,ts,userId", "live 45:chatType,final,isBackfill,legacyUuid,message,ts,userId",
-        "live 40/17:chatType,controlType,isBackfill,legacyUuid,targetSessionUuid,targetUserId,ts,userId", "live 45:chatType,final,legacyUuid,message,ts,userId",
+        "live 40/17:chatType,controlType,isBackfill,legacyUuid,targetSessionUuid,targetUserId,ts,userId", "live 45 as it's said:chatType,final,legacyUuid,message,ts,userId", "live 45:chatType,final,legacyUuid,message,ts,userId",
     ]);
 });
 
-test("what one person says one after the other is in one, by their name once; another person, or a pause of 20 s, begins another", async ({ page }) => {
+test("a line for each phrase, the name over the first of one person's one after the other; another person, or a pause of 20 s, and the name again", async ({ page }) => {
     const said = (ms, userId, message, rest = {}) => ({ ts: ns(NOW + ms), chatType: 45, userId, message: ` ${message}`, legacyUuid: `g${ms}`, final: true, isBackfill: true, ...rest });
     await open(page, { storage: { OTDspacesTranslate: "0" }, answer: { liveChat: () => liveChat([
         said(-60000, ALICE, "Раз,"), said(-58000, ALICE, "два."), said(-50000, "50", "Три."), said(-49000, ALICE, "Четыре."),
@@ -695,14 +695,27 @@ test("what one person says one after the other is in one, by their name once; an
     await expect.poll(() => cards(page)).toBe(4);
     await listenButton(page, "1LiveAAAAAAAA").click();
     await plays(page, 0.2);
-    // under the faces: what they're saying now, in one
-    await expect.poll(() => captionShown(page)).toBe("Alice: Пять, шесть.");
+    // under the faces: what's being said now, by whom
+    await expect.poll(() => captionShown(page)).toBe("Alice: шесть.");
     await page.click(".otd-space-player-wide");
-    await expect.poll(() => captionLines(page)).toEqual(["Alice: Раз, два.", "Hana: Три.", "Alice: Четыре.", "Alice: Пять, шесть."]);
+    await expect.poll(() => captionLines(page)).toEqual(["Alice: Раз,", "два.", "Hana: Три.", "Alice: Четыре.", "Alice: Пять,", "шесть."]);
     expect(await page.locator(".otd-space-player-caption b").allTextContents()).toEqual(["Alice:", "Hana:", "Alice:", "Alice:"]);
 });
 
-test("captions translated with Google to the translation language once they're said, in place, what was said over them; the player's button turns it off", async ({ page }) => {
+// Google through the extension, as content.js and the background script answer: a line each, Russian as it was
+const googleAnswers = page => page.evaluate(() => {
+    window.__google = [];
+    window.addEventListener("message", e => {
+        if(e.data?.action !== "otdGoogleTranslate") return;
+        const { id, text, to } = e.data;
+        window.__google.push({ text, to });
+        const lines = text.split("\n"), russian = line => /[а-я]/i.test(line);
+        const response = { text: lines.map(line => russian(line) ? line : `[ru] ${line}`).join("\n"), lang: lines.every(russian) ? "ru" : "en" };
+        window.postMessage({ otdGoogleTranslateResult: { id, response } }, "*");
+    });
+});
+
+test("captions translated with Google to the translation language, in place, what was said over them; the player's button turns it off", async ({ page }) => {
     await open(page, { storage: { OTDgrokTranslateLang: "ru" }, answer: { liveChat: () => liveChat([
         { ts: ns(NOW - 30000), chatType: 45, userId: "50", message: " Good morning", legacyUuid: "t1", final: true, isBackfill: true },
         { ts: ns(NOW - 29000), chatType: 45, userId: ALICE, message: " Привет", legacyUuid: "t2", final: true, isBackfill: true },
@@ -710,18 +723,7 @@ test("captions translated with Google to the translation language once they're s
         { ts: ns(NOW - 1000), chatType: 45, userId: ALICE, message: " Hello there", legacyUuid: "t3", final: false },
         { ts: ns(NOW - 900), chatType: 45, userId: ALICE, message: " Hello there, friends", legacyUuid: "t3", final: true },
     ]) } });
-    // Google through the extension, as content.js and the background script answer: a line each, Russian as it was
-    await page.evaluate(() => {
-        window.__google = [];
-        window.addEventListener("message", e => {
-            if(e.data?.action !== "otdGoogleTranslate") return;
-            const { id, text, to } = e.data;
-            window.__google.push({ text, to });
-            const lines = text.split("\n"), russian = line => /[а-я]/i.test(line);
-            const response = { text: lines.map(line => russian(line) ? line : `[ru] ${line}`).join("\n"), lang: lines.every(russian) ? "ru" : "en" };
-            window.postMessage({ otdGoogleTranslateResult: { id, response } }, "*");
-        });
-    });
+    await googleAnswers(page);
     await expect.poll(() => cards(page)).toBe(4);
     await listenButton(page, "1LiveAAAAAAAA").click();
     await plays(page, 0.2);
@@ -742,6 +744,24 @@ test("captions translated with Google to the translation language once they're s
     // and on again: the translations it had
     await translate.click();
     await expect.poll(() => captionLines(page)).toEqual(["Hana: [ru] Good morning", "Alice: Привет", "Alice: [ru] Hello there, friends"]);
+});
+
+test("a caption translated as it's said, not once it's final: its translation goes on with it", async ({ page }) => {
+    let answered = 0;
+    const asked = await open(page, { storage: { OTDgrokTranslateLang: "ru" }, answer: { liveChat: () => [
+        // as it's said, then, the chat answering again, said whole; then nothing more
+        () => liveChat([{ ts: ns(NOW - 1000), chatType: 45, userId: ALICE, message: " Hello there", legacyUuid: "r1", final: false }]),
+        () => liveChat([{ ts: ns(NOW - 900), chatType: 45, userId: ALICE, message: " Hello there, friends", legacyUuid: "r1", final: true }]),
+    ][answered++]?.() ?? new Promise(() => {}) } });
+    await googleAnswers(page);
+    await expect.poll(() => cards(page)).toBe(4);
+    await listenButton(page, "1LiveAAAAAAAA").click();
+    await plays(page, 0.2);
+    await expect.poll(() => captionShown(page)).toBe("Alice: [ru] Hello there");
+    await expect.poll(() => captionShown(page), { timeout: 8000 }).toBe("Alice: [ru] Hello there, friends");
+    expect(await page.evaluate(() => window.__google.map(request => request.text))).toEqual(["Hello there", "Hello there, friends"]);
+    expect(asked.filter(a => a.path === "/api/live-chat").length).toBeGreaterThan(1);
+    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).messages)).toContain("live 45 as it's said:chatType,final,legacyUuid,message,ts,userId");
 });
 
 test("a caption of X's live chat shows as the audio gets to when it was said, by the stream's clock", async ({ page }) => {
