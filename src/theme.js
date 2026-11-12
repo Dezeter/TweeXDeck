@@ -202,8 +202,10 @@
         ${s} .column { background-color: var(--otd-panel) !important; border-radius: 10px; }
         ${s} .column-panel { background-color: var(--otd-panel) !important; border-radius: 10px; }
         /* the hairline round a column over what's in it: on the panel itself it was under the column's scroller, which
-           is drawn over it, so only its header had it */
-        ${s} .column-panel::after { content: ""; position: absolute; inset: 0; z-index: 2; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--otd-panel-edge); pointer-events: none; }
+           is drawn over it, so only its header had it. The column's own: a column keeps the panels of an opened tweet
+           beside its own, and where TweetDeck left one inside it, its line was a line down the middle of the column;
+           a panel elsewhere, as the accounts' drawer, its own */
+        ${s} :is(.column, .column-panel:not(.column .column-panel))::after { content: ""; position: absolute; inset: 0; z-index: 2; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--otd-panel-edge); pointer-events: none; }
         ${s} .column-header { background-color: transparent !important; border-bottom: 1px solid var(--otd-line) !important; }
         ${s} .column-heading { color: var(--otd-text); font-weight: 600; }
         ${s} .column-header .attribution { color: var(--otd-text-3); }
