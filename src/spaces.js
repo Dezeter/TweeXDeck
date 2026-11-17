@@ -36,7 +36,7 @@
             pause: "Пауза", play: "Слушать", close: "Закрыть", volume: "Громкость", again: "Ещё раз",
             connecting: "Подключаемся…", playing: "В эфире", paused: "На паузе", ended: "Спейс закончился",
             cantPlay: status => `Не удалось подключиться (${status})`, noBrowser: "браузер не играет такой поток",
-            speaking: name => `Говорит ${name}`, captions: "Субтитры", stage: "На сцене", wide: "Субтитры во всю ширину колонки", translate: "Перевод субтитров",
+            speaking: name => `Говорит ${name}`, captions: "Субтитры", stage: "На сцене", wide: "Субтитры во всю ширину колонки", translate: "Перевод субтитров", translateWait: minutes => `Google пока не переводит, снова через ${minutes} мин`,
         },
         en: {
             live: "Live", coming: "Coming up", liveBadge: "Live", comingBadge: "Scheduled",
@@ -57,7 +57,7 @@
             pause: "Pause", play: "Listen", close: "Close", volume: "Volume", again: "Try again",
             connecting: "Connecting…", playing: "Live", paused: "Paused", ended: "The Space has ended",
             cantPlay: status => `Couldn't connect (${status})`, noBrowser: "the browser doesn't play this stream",
-            speaking: name => `${name} is speaking`, captions: "Captions", stage: "On stage", wide: "Captions across the column", translate: "Translate captions",
+            speaking: name => `${name} is speaking`, captions: "Captions", stage: "On stage", wide: "Captions across the column", translate: "Translate captions", translateWait: minutes => `Google isn't translating for now, again in ${minutes} min`,
         },
     };
     const LANG = LABELS[OTD.UI_LANG] ? OTD.UI_LANG : "en";
@@ -745,7 +745,7 @@
             kind: "spaces-player", state: player.state || "stopped", error: player.error, recovered: player.recovered.slice(-3),
             chat: chat.liveFailed ? `live chat ${chat.liveFailed}; ${chat.status}` : chat.via === "X's live chat" ? `live chat ${chat.status}` : chat.status, captionsAsked: chat.asked, captions: chat.captions, messages: [...chat.shapes.keys()], answers: chat.answers,
             metadata: [...metadata].map(([kind, n]) => `${kind} ×${n}`), participant: participantShape, space: spaceShape, hydra: hydraStats(),
-            translation: !translateOn() ? "off" : `${translation.done} to ${TRANSLATE_LANG}${translation.from ? ` (they came in ${translation.from})` : ""}${translation.failed ? `, ${translation.failed} not (${translation.error})` : ""}`,
+            translation: !translateOn() ? "off" : `${translation.done} to ${TRANSLATE_LANG}${translation.from ? ` (they came in ${translation.from})` : ""}${translation.failed ? `, ${translation.failed} not (${translation.error})` : ""}${translation.waitUntil > performance.now() ? `, asking again in ${Math.round((translation.waitUntil - performance.now()) / 1000)} s` : ""}`,
         }) }));
     }
 
@@ -1155,7 +1155,8 @@
     function closeChat() {
         const socket = chat.socket, live = chat.live;
         Object.assign(chat, { socket: null, live: null, token: null, speaker: null, caption: null, lines: [], pending: [], seen: new Map() });
-        translation.queue.length = 0;
+        translation.wanted.length = 0;
+        translation.forId.clear();
         if(chat.status && chat.status !== "no chat token") chat.status = "closed";
         try {
             socket?.close();
@@ -1180,9 +1181,7 @@
         chat.live = controller;
         const path = "/live-chat";
         try {
-            // in the translation language while the captions are translated: X's own come in the language it's
-            // asked in, as with TweeXDeck's language Russian they came in Russian, and in English in English
-            const headers = await OTD.xHeaders(path, "GET", { ...actAs(user), ...translateOn() ? { "x-twitter-client-language": TRANSLATE_LANG } : {} });
+            const headers = await OTD.xHeaders(path, "GET", actAs(user));
             if(chat.token !== token) return false;
             // a number of the listener's own, as x.com makes one
             const params = new URLSearchParams({ broadcastId: space.id, sessionId: String(1 + Math.floor(Math.random() * 2 ** 31)) });
@@ -1250,6 +1249,8 @@
         if(chat.seen.size > 500) chat.seen.delete(chat.seen.keys().next().value);
         const caption = { id, userId: String(line.userId || ""), text: line.message.trim(), final, at: Number(line.ts) / 1e6, came: performance.now() };
         if(!caption.text) return;
+        // asked about now, a few seconds before the audio gets to it, so the translation is there when it's shown
+        want(caption.text, id);
         chat.captions++;
         // what was said before the listener came: kept to scroll back to, not said now
         if(line.isBackfill) {
@@ -1292,12 +1293,27 @@
     }
     // --- the captions translated -------------------------------------------------------------------------------
     // With Google, as articles are, through the extension (content.js, the background script), Grok translating
-    // posts by their id only: a caption once it's final, to the translation language, many in one request, a line
-    // each; one already in that language stays as it is. Switch "spacesTranslate", the player's button too.
+    // posts by their id only, to the translation language; one already in it stays as it is. Google answers so many
+    // requests from an address and then, for a while, none (HTTP 429), and X gives the captions a phrase at a time:
+    // a caption is asked about as it comes, a few seconds before the audio gets to it, with the others that came,
+    // once in 5 s at most, a text once, of one still being said its newest text only. Turned away, it waits, half a
+    // minute and twice as long each time up to 10 minutes, and then asks about the last ones only. Switch
+    // "spacesTranslate", the player's button too.
     const TRANSLATE_LANG = OTD.targetLang();
+    const TRANSLATE_INTO = (() => {
+        try {
+            return new Intl.DisplayNames(LANG, { type: "language" }).of(TRANSLATE_LANG) || TRANSLATE_LANG;
+        } catch(e) {
+            return TRANSLATE_LANG;
+        }
+    })();
     const translateOn = () => OTD.isOn("spacesTranslate");
-    // from: the language Google found the last captions it was asked about in
-    const translation = { queue: [], timer: 0, running: false, done: 0, failed: 0, error: "", from: "" };
+    const ASK_EVERY = 5000, WAIT_FIRST = 30000, WAIT_MOST = 10 * 60000, AFTER_WAIT = 12, KNOWN_MOST = 2000;
+    // known: a text → its translation, or null where it's in the translation language or Google gave it back as it
+    // was; wanted: texts to ask about, as they came; forId: a caption's text wanted, to drop as it's said on;
+    // waitUntil, wait: turned away; from: the language Google found the last ones in
+    // alone: texts Google merged or split lines with, asked about each alone
+    const translation = { known: new Map(), wanted: [], forId: new Map(), alone: new Set(), timer: 0, running: false, askedAt: -Infinity, waitUntil: 0, wait: 0, done: 0, failed: 0, error: "", from: "" };
     let googleId = 0;
     const googleWaiting = new Map();
     window.addEventListener("message", e => {
@@ -1322,80 +1338,90 @@
         });
     }
     const sameLanguage = lang => !lang || String(lang).split("-")[0].toLowerCase() === TRANSLATE_LANG;
-    // as it's said, once a second at most, and once it's final; one in the translation language not again
-    const AS_SAID_EVERY = 1000;
     const plain = text => String(text || "").replace(/\s+/g, " ").trim();
-    function toTranslate(line) {
-        if(!translateOn() || !plain(line.text) || line.sameLanguage || line.translatedFrom === plain(line.text) || translation.queue.includes(line) || !chat.lines.includes(line)) return;
-        const wait = line.final ? 0 : (line.askedAt || -Infinity) + AS_SAID_EVERY - performance.now();
-        if(wait > 0) {
-            if(!line.again) line.again = setTimeout(() => {
-                line.again = 0;
-                toTranslate(line);
-            }, wait);
-            return;
+    // a text to be asked about, unless it's known; a caption's earlier text, not asked about yet, dropped
+    function want(text, id = "") {
+        text = plain(text);
+        if(!translateOn() || !text) return;
+        if(id) {
+            const before = translation.forId.get(id);
+            if(before && before !== text) {
+                const i = translation.wanted.indexOf(before);
+                if(i >= 0) translation.wanted.splice(i, 1);
+            }
+            translation.forId.set(id, text);
+            if(translation.forId.size > 500) translation.forId.delete(translation.forId.keys().next().value);
         }
-        line.askedAt = performance.now();
-        translation.queue.push(line);
-        if(!translation.timer && !translation.running) translation.timer = setTimeout(translateQueued, 100);
+        if(translation.known.has(text) || translation.wanted.includes(text)) return;
+        translation.wanted.push(text);
+        if(translation.wanted.length > 200) translation.wanted.splice(0, translation.wanted.length - 200);
+        schedule();
+    }
+    function schedule() {
+        if(translation.timer || translation.running || !translation.wanted.length) return;
+        const now = performance.now();
+        translation.timer = setTimeout(askGoogle, Math.max(translation.askedAt + ASK_EVERY, translation.waitUntil, now + 150) - now);
     }
     // a request is a GET, its address kept short of what Google takes
     const MAX_QUERY = 3500;
-    async function translateQueued() {
+    async function askGoogle() {
         translation.timer = 0;
+        if(!translateOn()) return;
+        // after a wait, the last ones only: not all that came in it at once
+        if(translation.wait) translation.wanted = translation.wanted.slice(-AFTER_WAIT);
+        if(!translation.wanted.length) return;
+        const batch = [translation.wanted.shift()];
+        let size = encodeURIComponent(batch[0]).length;
+        if(!translation.alone.delete(batch[0])) {
+            while(translation.wanted.length && !translation.alone.has(translation.wanted[0]) && size + encodeURIComponent(translation.wanted[0]).length + 3 <= MAX_QUERY) {
+                const text = translation.wanted.shift();
+                size += encodeURIComponent(text).length + 3;
+                batch.push(text);
+            }
+        }
         translation.running = true;
-        while(translation.queue.length) {
-            const batch = [];
-            let size = 0;
-            while(translation.queue.length && (!batch.length || size + encodeURIComponent(translation.queue[0].text).length + 3 <= MAX_QUERY)) {
-                const line = translation.queue.shift();
-                size += encodeURIComponent(line.text).length + 3;
-                batch.push(line);
-            }
-            const texts = batch.map(line => plain(line.text));
-            try {
-                const result = await google(texts.join("\n"));
-                if(result.lang) translation.from = String(result.lang).slice(0, 12);
-                let out = String(result.text || "").split("\n");
-                // Google merging or splitting lines: those one at a time
-                if(out.length !== batch.length) out = await Promise.all(texts.map(text => google(text).then(r => String(r.text || ""))));
-                // one in the translation language, or that Google gave back as it was, stays as it was said
-                batch.forEach((line, i) => {
-                    const translated = String(out[i] || "").trim();
-                    const same = sameLanguage(result.lang) || !translated || translated === texts[i];
-                    line.translated = same ? null : translated;
-                    line.translatedFrom = texts[i];
-                    if(sameLanguage(result.lang) || (same && line.final)) line.sameLanguage = true;
-                });
-                translation.done += batch.length;
-            } catch(e) {
-                // shown as they were said; the next ones tried again
-                for(const line of batch) line.translatedFrom = plain(line.text);
-                translation.failed += batch.length;
-                translation.error = describe(e);
-            }
-            // said on while it was asked: that too
-            for(const line of batch) if(plain(line.text) !== line.translatedFrom) toTranslate(line);
-            drawSpeaking();
+        translation.askedAt = performance.now();
+        try {
+            const result = await google(batch.join("\n"));
+            if(result.lang) translation.from = String(result.lang).slice(0, 12);
+            const out = String(result.text || "").split("\n");
+            // Google merging or splitting lines: those again, each alone
+            if(out.length !== batch.length && batch.length > 1) {
+                for(const text of batch) translation.alone.add(text);
+                translation.wanted.unshift(...batch);
+            } else batch.forEach((text, i) => {
+                const translated = String(out[i] || "").trim();
+                translation.known.set(text, sameLanguage(result.lang) || !translated || translated === text ? null : translated);
+            });
+            translation.done += batch.length;
+            translation.wait = translation.waitUntil = 0;
+        } catch(e) {
+            translation.failed += batch.length;
+            translation.error = describe(e);
+            translation.wait = Math.min(WAIT_MOST, translation.wait ? translation.wait * 2 : WAIT_FIRST);
+            translation.waitUntil = performance.now() + translation.wait;
+            translation.wanted.unshift(...batch);
         }
         translation.running = false;
+        while(translation.known.size > KNOWN_MOST) translation.known.delete(translation.known.keys().next().value);
+        for(const line of chat.lines) toTranslate(line);
+        drawSpeaking();
         report();
+        schedule();
+    }
+    // a line as translated where its text is known, else asked about; one still being said keeps the translation it
+    // had till its newest text's comes
+    function toTranslate(line) {
+        const text = plain(line.text);
+        if(!translateOn() || !text) return;
+        if(translation.known.has(text)) line.translated = translation.known.get(text);
+        else want(text, line.id);
     }
     function translateAll() {
         if(translateOn()) for(const line of chat.lines) toTranslate(line);
         drawSpeaking();
     }
-    // switched on or off: the live chat asked again in the language that goes with it, what was said kept
-    function translationSwitched() {
-        const token = chat.token, live = chat.live;
-        if(token && live) {
-            chat.live = null;
-            live.abort();
-            liveChat(token);
-        }
-        translateAll();
-    }
-    OTD.onChange("OTDspacesTranslate", translationSwitched);
+    OTD.onChange("OTDspacesTranslate", translateAll);
     // what's said, a line for each phrase as it's said, the name over the first of one person's one after the other:
     // another person, or a pause of 20 s, and the name again; each as translated where it is and the translation's on
     const PAUSE = 20000;
@@ -1561,15 +1587,7 @@
             });
             const wide = iconButton("otd-space-player-wide", T.wide, ICONS.wide);
             wide.addEventListener("click", () => wideCaptions());
-            // the language it translates to, named
-            const into = (() => {
-                try {
-                    return new Intl.DisplayNames(LANG, { type: "language" }).of(TRANSLATE_LANG) || TRANSLATE_LANG;
-                } catch(e) {
-                    return TRANSLATE_LANG;
-                }
-            })();
-            const translate = iconButton("otd-space-player-translate", `${T.translate}: ${into}`, ICONS.translate);
+            const translate = iconButton("otd-space-player-translate", `${T.translate}: ${TRANSLATE_INTO}`, ICONS.translate);
             translate.addEventListener("click", () => OTD.setOn("spacesTranslate", !translateOn()));
             bottom.append(volumeIcon, range, cc, wide, translate, link("", "otd-space-player-open", T.open));
             box.append(top, people, said, bottom);
@@ -1662,6 +1680,14 @@
         wideButton.hidden = !chat.captions || !captionsOn();
         const translateButton = box.querySelector(".otd-space-player-translate");
         translateButton.setAttribute("aria-pressed", String(translateOn()));
+        // the language it translates to; Google turning it away for now, said
+        const waiting = translateOn() && translation.waitUntil > performance.now();
+        const translateLabel = `${T.translate}: ${TRANSLATE_INTO}${waiting ? ` — ${T.translateWait(Math.ceil((translation.waitUntil - performance.now()) / 60000))}` : ""}`;
+        if(translateButton.title !== translateLabel) {
+            translateButton.title = translateLabel;
+            translateButton.setAttribute("aria-label", translateLabel);
+        }
+        translateButton.classList.toggle("is-waiting", waiting);
         translateButton.hidden = !chat.captions || !captionsOn();
     }
     function wideCaptions() {
@@ -1776,6 +1802,7 @@
         :root .otd-space-player :is(.otd-space-player-wide, .otd-space-player-translate) { width: 24px; height: 24px; margin: 0; border-radius: 4px; background: transparent; color: var(--otd-text-2, #657786); }
         :root .otd-space-player :is(.otd-space-player-wide, .otd-space-player-translate):hover { background: var(--otd-ghost-hover, rgba(0, 0, 0, .08)); }
         :root .otd-space-player :is(.otd-space-player-wide, .otd-space-player-translate)[aria-pressed="true"] { color: var(--otd-accent, #1d9bf0); }
+        :root .otd-space-player .otd-space-player-translate.is-waiting { opacity: .5; }
         .otd-space-player a.otd-space-player-open { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--otd-accent, #1d9bf0); font-size: 12px; text-decoration: none; }
         .otd-space-player a.otd-space-player-open:hover { text-decoration: underline; }
     `);
