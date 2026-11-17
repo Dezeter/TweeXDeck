@@ -140,7 +140,7 @@
     let metaPolicy = false;
     let answered = 0;
     let solver = null;
-    let theme = "";
+    let theme = "", typeahead = "";
     // the columns' requests for their new tweets, by kind of column (home, list, user): how many, the last one,
     // the last one that brought tweets, and how many went without a top cursor
     const polls = new Map();
@@ -167,6 +167,7 @@
         else if(entry.kind === "request") pending.set(entry.id, { method: String(entry.method), url: clean(entry.url), at: Date.now() });
         else if(entry.kind === "solver") solver = { ok: !!entry.ok, text: String(entry.text || ""), at: Date.now() };
         else if(entry.kind === "theme") theme = String(entry.text || "");
+        else if(entry.kind === "typeahead") typeahead = `${String(entry.text || "").slice(0, 160)} at ${seconds(Date.now())}`;
         else if(entry.kind === "spaces-player") spacesPlayer = { state: String(entry.state || ""), error: String(entry.error || "").slice(0, 80), at: Date.now(),
             chat: String(entry.chat || "").slice(0, 80), captionsAsked: String(entry.captionsAsked || "").slice(0, 80), captions: Number(entry.captions) || 0, translation: String(entry.translation || "").slice(0, 120),
             recovered: Array.isArray(entry.recovered) ? entry.recovered.slice(0, 3).map(r => String(r).slice(0, 160)) : [],
@@ -431,6 +432,7 @@
             ...(policyNonces.size ? [`Nonces: the policy's ${nonces(policyNonces)}; x.com's scripts' ${nonces(pageNonces) || "none"}${pageNonces.size ? (otherLoadsPolicy() ? ", none of them in the policy: another load's policy" : ", in the policy: this load's") : ""}`] : []),
             `Solver: ${solver ? `${solver.ok ? "ready" : "failed"} at ${seconds(solver.at)} (${solver.text})` : "no news"}`,
             `Dark theme: ${theme || "no news"}`,
+            `@name and #hashtag suggestions: ${typeahead || "none asked"}`,
             `Extension files not loaded: ${files.join(", ") || "none"}`,
             `Blocked by Content-Security-Policy: ${csp.size ? "" : "nothing"}`,
             ...[...csp.values()].map(v => `  ${v.directive} ${v.blocked}${v.where} ${times(v)}`),

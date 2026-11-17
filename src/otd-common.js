@@ -83,6 +83,8 @@
             label: { ru: "Кнопка «Эмодзи» в окне твита", en: "\"Emoji\" button in the tweet box" } },
         { key: "gifPicker", storage: "OTDgifPicker", section: "compose",
             label: { ru: "Кнопка «GIF» в окне твита: поиск GIF на X", en: "\"GIF\" button in the tweet box: X's GIF search" } },
+        { key: "typeahead", storage: "OTDtypeahead", section: "compose",
+            label: { ru: "Подсказки при наборе @имени и #хештега: аккаунты из поиска X с аватаркой, именем и галочкой", en: "Suggestions as you type an @name or #hashtag: accounts from X's search with their picture, name and check" } },
         { key: "longPosts", storage: "OTDlongPosts", section: "compose",
             label: { ru: "Длинные посты, как на x.com с Premium: до 25 000 знаков вместо 280", en: "Long posts, as on x.com with Premium: up to 25,000 characters instead of 280" } },
         { key: "blockServiceWorker", storage: "OTDblockServiceWorker", section: "other", default: false,

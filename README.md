@@ -25,7 +25,7 @@ This is an independently developed fork of [OldTweetDeck by dimden](https://gith
 - [Short headers](#columns): "↩ @name" for "Replying to", your own tweet in a notification without your name over it again, a notification's icon in the avatars' column
 - [A For you column](#columns), X's own picks beside your Home, [a Spaces column](#columns) with the live and coming Spaces of people you follow, to listen to right there, [super wide columns](#columns) of 400px, [flex columns that share the window](#columns), [columns that hold still](#columns) under the pointer, [no "Show more"](#columns) in them, [an author's threads joined by a line](#columns), and [unread counts](#columns) in the tab title
 - [Tweet shapes while a column loads](#loading-and-empty-columns), and a plain message with a button when it's empty or X didn't answer
-- [Emoji and GIF pickers](#emoji-and-gifs) in the tweet box, and [long posts](#long-posts) up to 25,000 characters
+- [Emoji and GIF pickers](#emoji-and-gifs) in the tweet box, [suggestions as you type an @name](#emoji-and-gifs), and [long posts](#long-posts) up to 25,000 characters
 - [An explanation instead of an endless spinner](#when-tweetdeck-doesnt-load) when TweetDeck doesn't load, with a report to copy into an issue
 - [A calm dark theme](#appearance) in place of TweetDeck's dark blue, [and a light one to match](#appearance), [a theme that follows the system's](#appearance), [Lights out](#appearance) in black, [a comfortable density](#appearance) and [sharp SVG icons](#appearance)
 - [A font of your choice](#font) for TweetDeck's text: Golos Text, Onest, Inter or Manrope
@@ -112,6 +112,7 @@ The same settings are kept in `localStorage`, so they can also be changed from t
 | Pasting images | `OTDpasteImages` |
 | "Emoji" button | `OTDemojiPicker` |
 | "Find a GIF" button | `OTDgifPicker` |
+| Suggestions as you type an @name or #hashtag | `OTDtypeahead` |
 | Long posts | `OTDlongPosts` |
 | Better readability: contrast, larger buttons, keyboard focus | `OTDmodernLook` |
 | Lights out (off by default, `'1'` turns it on) | `OTDlightsOut` |
@@ -156,6 +157,8 @@ The tweet box has two more buttons under "Add image":
 
 - **Emoji** opens a panel with every emoji by group, a search by name in Russian or English, and the ones you used recently at the top. A click puts the emoji where the cursor is.
 - **Find a GIF** searches GIFs with x.com's own GIF search and attaches the one you click, like an image added with "Add image".
+
+As you type an @name in the tweet box, the people X's search finds for it come up under it, as on x.com: their picture, name, handle and check, in X's order, the ones you follow and the ones who match best first, so you can see it's the one you mean before you pick it with a click, Enter or Tab. A #hashtag gets hashtags the same way. TweetDeck asked X's search of before for them, and for a list of the people it knew made ahead, which X no longer gives, so nothing came up.
 
 The emoji list is `files/emoji.json`, built from [emojibase](https://emojibase.dev) (MIT) by `npm run emoji`.
 
