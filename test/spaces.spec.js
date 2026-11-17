@@ -147,7 +147,7 @@ async function open(page, { user = "1", main = MAIN, answer = {}, clock = "fixed
         "https://api.otd.test/": route => {
             const request = route.request(), url = new URL(request.url());
             if(url.pathname !== "/live-chat") return route.abort();
-            asked.push({ path: `/api${url.pathname}`, query: Object.fromEntries(url.searchParams), actAs: request.headers()["x-act-as-user-id"] || null, auth: /^Bearer /.test(request.headers().authorization || "") });
+            asked.push({ path: `/api${url.pathname}`, query: Object.fromEntries(url.searchParams), actAs: request.headers()["x-act-as-user-id"] || null, auth: /^Bearer /.test(request.headers().authorization || ""), language: request.headers()["x-twitter-client-language"] || null });
             return Promise.resolve(answers.liveChat(url.searchParams.get("broadcastId"))).then(answer => reply(route, answer));
         },
         "https://abs.twimg.com/": route => {
@@ -733,7 +733,7 @@ test("captions translated with Google to the translation language, in place, wha
     expect(await page.evaluate(() => [...document.querySelectorAll(".otd-space-player-line")].map(line => line.title))).toEqual(["Good morning", "", "Hello there, friends"]);
     // to the translation language, all that came together in one request, a line each; not what was still being said
     expect(await page.evaluate(() => window.__google)).toEqual([{ text: "Good morning\nПривет\nHello there, friends", to: "ru" }]);
-    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).translation)).toBe("3 to ru");
+    expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).translation)).toBe("3 to ru (they came in en)");
 
     // the player's button: what was said, kept off
     const translate = page.locator(".otd-space-player-translate");
@@ -744,6 +744,28 @@ test("captions translated with Google to the translation language, in place, wha
     // and on again: the translations it had
     await translate.click();
     await expect.poll(() => captionLines(page)).toEqual(["Hana: [ru] Good morning", "Alice: Привет", "Alice: [ru] Hello there, friends"]);
+});
+
+test("captions asked of X in the translation language while they're translated, whatever TweeXDeck's language; again as it's switched", async ({ page }) => {
+    let answered = 0;
+    const asked = await open(page, { storage: { OTDgrokTranslateLang: "ru", OTDuiLang: "en" }, answer: { liveChat: () => answered++ < 1
+        ? liveChat([{ ts: ns(NOW - 1000), chatType: 45, userId: ALICE, message: " Привет", legacyUuid: "l1", final: true }])
+        : new Promise(() => {}) } });
+    await googleAnswers(page);
+    await expect.poll(() => cards(page)).toBe(4);
+    await listenButton(page, "1LiveAAAAAAAA").click();
+    await plays(page, 0.2);
+    const chats = () => asked.filter(a => a.path === "/api/live-chat").map(a => a.language);
+    await expect.poll(chats).toEqual(["ru"]);
+    await expect.poll(() => captionShown(page)).toBe("Alice: Привет");
+    // the button names the language it translates to
+    expect(await page.locator(".otd-space-player-translate").getAttribute("aria-label")).toBe("Translate captions: Russian");
+    // off: the live chat again, in TweeXDeck's language, what was said kept
+    await page.click(".otd-space-player-translate");
+    await expect.poll(chats).toEqual(["ru", "en"]);
+    expect(await captionShown(page)).toBe("Alice: Привет");
+    await page.click(".otd-space-player-translate");
+    await expect.poll(chats).toEqual(["ru", "en", "ru"]);
 });
 
 test("a caption translated as it's said, not once it's final: its translation goes on with it", async ({ page }) => {
