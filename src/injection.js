@@ -83,6 +83,7 @@ async function main() {
             load("/src/tab-title.js"),
             load("/src/emoji-picker.js"),
             load("/src/gif-picker.js"),
+            load("/src/typeahead.js"),
             load("/src/long-posts.js"),
             load("/src/tweet-actions.js"),
         ]);

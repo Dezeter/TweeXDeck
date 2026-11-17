@@ -28,8 +28,9 @@ const look = (page, id) => page.evaluate(id => {
     return {
         content: before.content,
         mask: mask === "none" ? "none" : decodeURIComponent(mask).match(/fill='([^']+)' stroke='#000' stroke-width='([\d.]+)'/).slice(1).join(" "),
-        // the mask is filled with the icon's color, so TweetDeck's colors stay
-        color: before.backgroundColor === getComputedStyle(el).color,
+        // the mask is filled with the icon's color, so TweetDeck's colors stay; to a little over half a screen pixel of
+        // the box's edges, where Firefox showed a hairline of it with the mask a part of a pixel off
+        color: before.backgroundImage === `linear-gradient(${getComputedStyle(el).color}, ${getComputedStyle(el).color})` && before.backgroundSize === "calc(100% - 1.1px) calc(100% - 1.1px)",
         size: [Math.round(el.getBoundingClientRect().width), Math.round(before.width.replace("px", ""))],
     };
 }, id);
@@ -67,9 +68,9 @@ test("the verified badge is X's, grey as the other icons, in place of TweetDeck'
         document.querySelector("#badge") || document.querySelector(".column").insertAdjacentHTML("beforeend", '<b class="fullname">Alice</b><i class="js-show-tip sprite sprite-verified-mini" id="badge"></i>');
         const style = getComputedStyle(document.querySelector("#badge"));
         const mask = style.maskImage || style.webkitMaskImage;
-        return { image: style.backgroundImage.startsWith("url") ? "picture" : style.backgroundImage, fill: style.backgroundColor, x: decodeURIComponent(mask).includes("M22.25 12"), size: style.width };
+        return { image: style.backgroundImage.startsWith("url") ? "picture" : style.backgroundImage.replace(/\(.*/, ""), fill: style.backgroundImage.match(/^linear-gradient\((rgb\([^)]*\))/)?.[1], inset: style.backgroundSize, x: decodeURIComponent(mask).includes("M22.25 12"), size: style.width };
     });
-    expect(await badge()).toEqual({ image: "none", fill: "rgb(83, 100, 113)", x: true, size: "16px" });
+    expect(await badge()).toEqual({ image: "linear-gradient", fill: "rgb(83, 100, 113)", inset: "calc(100% - 1.1px) calc(100% - 1.1px)", x: true, size: "16px" });
     await page.evaluate(() => document.documentElement.classList.add("dark"));
     expect((await badge()).fill).toBe("rgb(136, 153, 166)");
     await page.evaluate(() => OTD.setOn("svgIcons", false));

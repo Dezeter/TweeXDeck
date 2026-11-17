@@ -15,7 +15,7 @@ test("switches read and write the same localStorage keys as before", async ({ pa
         ["pauseOnHover", true], ["steadyColumns", true], ["fillGaps", true], ["selfThreads", true], ["threadsOldestFirst", true], ["skeletons", true], ["tabTitle", true], ["compactHeaders", true], ["loadAllReplies", true], ["instantReplies", true], ["articles", true], ["smartCashtags", true],
         ["cleanLinks", true], ["absoluteTime", false], ["redraft", true], ["muteFromMenu", true], ["rowMuteBlock", false],
         ["inlineVideo", true], ["downloadMedia", true], ["copyMediaLinks", true], ["pasteImages", false],
-        ["emojiPicker", true], ["gifPicker", true], ["longPosts", true], ["blockServiceWorker", false], ["loadWatchdog", true],
+        ["emojiPicker", true], ["gifPicker", true], ["typeahead", true], ["longPosts", true], ["blockServiceWorker", false], ["loadWatchdog", true],
     ]);
     expect(result).toMatchObject({ paste: null, group: "0", unknown: "no TweeXDeck feature nope" });
 });

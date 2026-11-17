@@ -745,7 +745,7 @@
             kind: "spaces-player", state: player.state || "stopped", error: player.error, recovered: player.recovered.slice(-3),
             chat: chat.liveFailed ? `live chat ${chat.liveFailed}; ${chat.status}` : chat.via === "X's live chat" ? `live chat ${chat.status}` : chat.status, captionsAsked: chat.asked, captions: chat.captions, messages: [...chat.shapes.keys()], answers: chat.answers,
             metadata: [...metadata].map(([kind, n]) => `${kind} ×${n}`), participant: participantShape, space: spaceShape, hydra: hydraStats(),
-            translation: !translateOn() ? "off" : `${translation.done} to ${TRANSLATE_LANG}${translation.failed ? `, ${translation.failed} not (${translation.error})` : ""}`,
+            translation: !translateOn() ? "off" : `${translation.done} to ${TRANSLATE_LANG}${translation.from ? ` (they came in ${translation.from})` : ""}${translation.failed ? `, ${translation.failed} not (${translation.error})` : ""}`,
         }) }));
     }
 
@@ -1180,7 +1180,9 @@
         chat.live = controller;
         const path = "/live-chat";
         try {
-            const headers = await OTD.xHeaders(path, "GET", actAs(user));
+            // in the translation language while the captions are translated: X's own come in the language it's
+            // asked in, as with TweeXDeck's language Russian they came in Russian, and in English in English
+            const headers = await OTD.xHeaders(path, "GET", { ...actAs(user), ...translateOn() ? { "x-twitter-client-language": TRANSLATE_LANG } : {} });
             if(chat.token !== token) return false;
             // a number of the listener's own, as x.com makes one
             const params = new URLSearchParams({ broadcastId: space.id, sessionId: String(1 + Math.floor(Math.random() * 2 ** 31)) });
@@ -1294,7 +1296,8 @@
     // each; one already in that language stays as it is. Switch "spacesTranslate", the player's button too.
     const TRANSLATE_LANG = OTD.targetLang();
     const translateOn = () => OTD.isOn("spacesTranslate");
-    const translation = { queue: [], timer: 0, running: false, done: 0, failed: 0, error: "" };
+    // from: the language Google found the last captions it was asked about in
+    const translation = { queue: [], timer: 0, running: false, done: 0, failed: 0, error: "", from: "" };
     let googleId = 0;
     const googleWaiting = new Map();
     window.addEventListener("message", e => {
@@ -1352,6 +1355,7 @@
             const texts = batch.map(line => plain(line.text));
             try {
                 const result = await google(texts.join("\n"));
+                if(result.lang) translation.from = String(result.lang).slice(0, 12);
                 let out = String(result.text || "").split("\n");
                 // Google merging or splitting lines: those one at a time
                 if(out.length !== batch.length) out = await Promise.all(texts.map(text => google(text).then(r => String(r.text || ""))));
@@ -1381,7 +1385,17 @@
         if(translateOn()) for(const line of chat.lines) toTranslate(line);
         drawSpeaking();
     }
-    OTD.onChange("OTDspacesTranslate", translateAll);
+    // switched on or off: the live chat asked again in the language that goes with it, what was said kept
+    function translationSwitched() {
+        const token = chat.token, live = chat.live;
+        if(token && live) {
+            chat.live = null;
+            live.abort();
+            liveChat(token);
+        }
+        translateAll();
+    }
+    OTD.onChange("OTDspacesTranslate", translationSwitched);
     // what's said, a line for each phrase as it's said, the name over the first of one person's one after the other:
     // another person, or a pause of 20 s, and the name again; each as translated where it is and the translation's on
     const PAUSE = 20000;
@@ -1547,11 +1561,16 @@
             });
             const wide = iconButton("otd-space-player-wide", T.wide, ICONS.wide);
             wide.addEventListener("click", () => wideCaptions());
-            const translate = iconButton("otd-space-player-translate", T.translate, ICONS.translate);
-            translate.addEventListener("click", () => {
-                OTD.setOn("spacesTranslate", !translateOn());
-                translateAll();
-            });
+            // the language it translates to, named
+            const into = (() => {
+                try {
+                    return new Intl.DisplayNames(LANG, { type: "language" }).of(TRANSLATE_LANG) || TRANSLATE_LANG;
+                } catch(e) {
+                    return TRANSLATE_LANG;
+                }
+            })();
+            const translate = iconButton("otd-space-player-translate", `${T.translate}: ${into}`, ICONS.translate);
+            translate.addEventListener("click", () => OTD.setOn("spacesTranslate", !translateOn()));
             bottom.append(volumeIcon, range, cc, wide, translate, link("", "otd-space-player-open", T.open));
             box.append(top, people, said, bottom);
             scroller.prepend(box);

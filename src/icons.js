@@ -88,19 +88,28 @@
     };
     // X's verified badge, filled, the check cut out
     const BADGE = `url("data:image/svg+xml,${encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.33 2.19c-1.4-.46-2.91-.2-3.92.81s-1.26 2.52-.8 3.91c-1.31.67-2.2 1.91-2.2 3.34s.89 2.67 2.2 3.34c-.46 1.39-.21 2.9.8 3.91s2.52 1.26 3.91.81c.67 1.31 1.91 2.19 3.34 2.19s2.68-.88 3.34-2.19c1.39.45 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z'/></svg>")}")`;
+    // the icon's color, filled to a little over half a screen pixel of its box's edges: Firefox, at a place between
+    // pixels, as a line of a tweet's text can put a tweet's buttons, draws a mask up to half a pixel off, and a box
+    // filled to its edges showed a hairline along them there, over and right of the buttons; the shapes keep about
+    // that far from them, so they're as they were
+    const FILL = "linear-gradient(currentColor, currentColor) center / calc(100% - 2 * var(--otd-icon-inset)) calc(100% - 2 * var(--otd-icon-inset)) no-repeat";
     const classes = Object.keys(ICONS);
     OTD.addStyle(`
+        :root { --otd-icon-inset: .55px; }
+        @media (min-resolution: 1.25dppx) { :root { --otd-icon-inset: .45px; } }
+        @media (min-resolution: 1.5dppx) { :root { --otd-icon-inset: .37px; } }
+        @media (min-resolution: 2dppx) { :root { --otd-icon-inset: .28px; } }
         ${classes.map(name => `html.otd-svg-icons .icon-${name} { --otd-icon: ${url(...ICONS[name].split(" "))}; }`).join("\n")}
         ${classes.map(name => `html.otd-svg-icons .icon-${name}::before`).join(", ")} {
             /* 1em, as the glyph was, also where TweetDeck lets an icon's box size itself; and where the glyph was: in the
                middle of a line of the icon's line height, which TweetDeck sets taller than the icon in places (a column's
                header puts its icon on the title's line that way) */
-            content: ""; display: block; width: 1em; height: 1em; margin-top: calc((1lh - 1em) / 2); background-color: currentColor;
+            content: ""; display: block; width: 1em; height: 1em; margin-top: calc((1lh - 1em) / 2); background: ${FILL};
             -webkit-mask: var(--otd-icon) center / contain no-repeat; mask: var(--otd-icon) center / contain no-repeat;
         }
         /* the verified badge in X's shape, grey as the other icons, in place of TweetDeck's blue picture */
         html.otd-svg-icons :is(.sprite-verified, .sprite-verified-mini) {
-            background: currentColor !important; color: #536471; -webkit-mask: ${BADGE} center / contain no-repeat; mask: ${BADGE} center / contain no-repeat;
+            background: ${FILL} !important; color: #536471; -webkit-mask: ${BADGE} center / contain no-repeat; mask: ${BADGE} center / contain no-repeat;
         }
         html.dark.otd-svg-icons :is(.sprite-verified, .sprite-verified-mini) { color: var(--otd-text-2, #8899a6); }
         /* the search button's margins are for the glyph on its text line, which put the icon 5px under the middle of

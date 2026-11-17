@@ -158,8 +158,8 @@ test("the light theme is the calm one in light: white columns on a light grey, n
 test("Lights out: the calm dark theme in black, with a hairline round a column; off, the calm one again", async ({ page }) => {
     await open(page, { dark: true, storage: { OTDlightsOut: "1" } });
     expect(await colors(page)).toEqual({ column: "rgb(0, 0, 0)", item: "rgb(0, 0, 0)", border: "rgba(255, 255, 255, 0.1)", app: "rgb(0, 0, 0)", mute: "rgb(128, 132, 140)" });
-    // over the column's tweets: on the panel itself its scroller, drawn over it, hid the hairline by them
-    expect(await page.$eval(".column-panel", el => [getComputedStyle(el, "::after").boxShadow, getComputedStyle(el, "::after").zIndex])).toEqual(["rgba(255, 255, 255, 0.1) 0px 0px 0px 1px inset", "2"]);
+    // over the column's tweets, the column's own: on a panel its scroller, drawn over it, hid the hairline by them
+    expect(await page.$eval(".column", el => [getComputedStyle(el, "::after").boxShadow, getComputedStyle(el, "::after").zIndex])).toEqual(["rgba(255, 255, 255, 0.1) 0px 0px 0px 1px inset", "2"]);
     // a rule with !important keeps it
     expect(await page.evaluate(() => {
         document.body.insertAdjacentHTML("beforeend", '<div class="accounts-drawer"></div>');
@@ -171,6 +171,54 @@ test("Lights out: the calm dark theme in black, with a hairline round a column; 
     await page.evaluate(() => OTD.setOn("lightsOut", true));
     expect((await colors(page)).column).toBe("rgb(0, 0, 0)");
     expect(await page.$$("#otd-lights-out")).toHaveLength(1);
+});
+
+// a column as TweetDeck has it: its panel, then the opened tweet's and the one after it beside it, the opened tweet's
+// left inside the column, as TweetDeck can leave it; the vertical lines a picture of it has: x across the column
+async function columnLines(page) {
+    const box = await page.evaluate(() => {
+        const column = document.querySelector(".column");
+        const panel = column.querySelector(".column-panel");
+        column.style.height = "400px";
+        column.innerHTML = `<div class="js-column-holder column-holder">${panel.outerHTML}<div class="js-column-detail column-detail column-panel flex flex-column height-p--100" style="left:200px"></div><div class="js-column-social-proof column-detail-level-2 column-panel flex flex-column height-p--100"></div></div>`;
+        const { x, y, width, height } = column.getBoundingClientRect();
+        return { x, y, width, height };
+    });
+    const png = (await page.screenshot({ clip: box })).toString("base64");
+    return page.evaluate(async png => {
+        const image = new Image();
+        image.src = `data:image/png;base64,${png}`;
+        await image.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const context = canvas.getContext("2d");
+        context.drawImage(image, 0, 0);
+        const { data, width, height } = context.getImageData(0, 0, image.width, image.height);
+        const at = (x, y) => data[(y * width + x) * 4] + data[(y * width + x) * 4 + 1] + data[(y * width + x) * 4 + 2];
+        // a column of pixels unlike those on both sides of it, the same way, down most of the picture
+        const lines = [];
+        for(let x = 0; x < width; x++) {
+            let n = 0;
+            for(let y = 12; y < height - 12; y++) {
+                const c = at(x, y), l = at(Math.max(0, x - 3), y), r = at(Math.min(width - 1, x + 3), y);
+                if(Math.sign(c - l) === Math.sign(c - r) && Math.abs(c - l) > 6 && Math.abs(c - r) > 6) n++;
+            }
+            if(n > (height - 24) * 0.6) lines.push(x);
+        }
+        return { width, lines };
+    }, png);
+}
+
+test("the hairline round a column is the column's own: no line inside it from the panels TweetDeck keeps beside its own", async ({ page }) => {
+    for(const [name, options] of [["light", {}], ["Lights out", { dark: true, storage: { OTDlightsOut: "1" } }]]) {
+        await open(page, { columns: 1, ...options });
+        const { width, lines } = await columnLines(page);
+        // round the column, nowhere inside it
+        expect(lines.filter(x => x > 2 && x < width - 3), name).toEqual([]);
+        expect(await page.$eval(".column", el => getComputedStyle(el, "::after").boxShadow), name).toBe(name === "light" ? "rgba(0, 0, 0, 0.06) 0px 0px 0px 1px inset" : "rgba(255, 255, 255, 0.1) 0px 0px 0px 1px inset");
+        expect(await page.$$eval(".column .column-panel", panels => panels.map(el => getComputedStyle(el, "::after").content)), name).toEqual(["none", "none", "none"]);
+    }
 });
 
 // Firefox: injection.js is a content script there, and the <style> it puts TweetDeck's CSS in is closed to the page

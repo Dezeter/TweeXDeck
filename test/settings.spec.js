@@ -39,7 +39,7 @@ test("TweeXDeck's tabs after TweetDeck's own, one for each section, a switch for
         ["pauseOnHover", true], ["steadyColumns", true], ["fillGaps", true], ["selfThreads", true], ["threadsOldestFirst", true], ["skeletons", true], ["tabTitle", true], ["compactHeaders", true], ["loadAllReplies", true], ["instantReplies", true], ["articles", true], ["smartCashtags", true],
         ["cleanLinks", true], ["absoluteTime", false], ["redraft", true], ["muteFromMenu", true], ["rowMuteBlock", false],
         ["inlineVideo", true], ["downloadMedia", true], ["copyMediaLinks", true], ["pasteImages", false],
-        ["emojiPicker", true], ["gifPicker", true], ["longPosts", true], ["blockServiceWorker", false], ["loadWatchdog", true],
+        ["emojiPicker", true], ["gifPicker", true], ["typeahead", true], ["longPosts", true], ["blockServiceWorker", false], ["loadWatchdog", true],
     ]);
     expect(await page.textContent('#otd-settings [data-feature="groupNotifications"]')).toBe(" Группировать лайки, ретвиты и подписки в уведомлениях");
     // "what: how" is a title and a hint under it
