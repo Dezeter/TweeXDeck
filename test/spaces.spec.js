@@ -703,17 +703,18 @@ test("a line for each phrase, the name over the first of one person's one after 
 });
 
 // Google through the extension, as content.js and the background script answer: a line each, Russian as it was
-const googleAnswers = page => page.evaluate(() => {
+// or turning it away, as Google does an address that asked too much (HTTP 429)
+const googleAnswers = (page, { refuse = false } = {}) => page.evaluate(refuse => {
     window.__google = [];
     window.addEventListener("message", e => {
         if(e.data?.action !== "otdGoogleTranslate") return;
         const { id, text, to } = e.data;
         window.__google.push({ text, to });
         const lines = text.split("\n"), russian = line => /[а-я]/i.test(line);
-        const response = { text: lines.map(line => russian(line) ? line : `[ru] ${line}`).join("\n"), lang: lines.every(russian) ? "ru" : "en" };
+        const response = refuse ? { error: "HTTP 429" } : { text: lines.map(line => russian(line) ? line : `[ru] ${line}`).join("\n"), lang: lines.every(russian) ? "ru" : "en" };
         window.postMessage({ otdGoogleTranslateResult: { id, response } }, "*");
     });
-});
+}, refuse);
 
 test("captions translated with Google to the translation language, in place, what was said over them; the player's button turns it off", async ({ page }) => {
     await open(page, { storage: { OTDgrokTranslateLang: "ru" }, answer: { liveChat: () => liveChat([
@@ -735,9 +736,10 @@ test("captions translated with Google to the translation language, in place, wha
     expect(await page.evaluate(() => window.__google)).toEqual([{ text: "Good morning\nПривет\nHello there, friends", to: "ru" }]);
     expect(await page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).translation)).toBe("3 to ru (they came in en)");
 
-    // the player's button: what was said, kept off
+    // the player's button, naming the language: what was said, kept off
     const translate = page.locator(".otd-space-player-translate");
     expect(await translate.getAttribute("aria-pressed")).toBe("true");
+    expect(await translate.getAttribute("aria-label")).toBe("Перевод субтитров: русский");
     await translate.click();
     await expect.poll(() => captionLines(page)).toEqual(["Hana: Good morning", "Alice: Привет", "Alice: Hello there, friends"]);
     expect([await translate.getAttribute("aria-pressed"), await page.evaluate(() => localStorage.OTDspacesTranslate)]).toEqual(["false", "0"]);
@@ -746,26 +748,29 @@ test("captions translated with Google to the translation language, in place, wha
     await expect.poll(() => captionLines(page)).toEqual(["Hana: [ru] Good morning", "Alice: Привет", "Alice: [ru] Hello there, friends"]);
 });
 
-test("captions asked of X in the translation language while they're translated, whatever TweeXDeck's language; again as it's switched", async ({ page }) => {
+test("Google turning translation away for now: no more asked till a wait is over, the player and the diagnostics say so", async ({ page }) => {
     let answered = 0;
-    const asked = await open(page, { storage: { OTDgrokTranslateLang: "ru", OTDuiLang: "en" }, answer: { liveChat: () => answered++ < 1
-        ? liveChat([{ ts: ns(NOW - 1000), chatType: 45, userId: ALICE, message: " Привет", legacyUuid: "l1", final: true }])
-        : new Promise(() => {}) } });
-    await googleAnswers(page);
+    await open(page, { storage: { OTDgrokTranslateLang: "ru" }, answer: { liveChat: () => [
+        () => liveChat([
+            { ts: ns(NOW - 30000), chatType: 45, userId: "50", message: " Good morning", legacyUuid: "w1", final: true, isBackfill: true },
+            { ts: ns(NOW - 1000), chatType: 45, userId: ALICE, message: " Hello there", legacyUuid: "w2", final: true },
+        ]),
+        // the chat answering again with more said
+        () => liveChat([{ ts: ns(NOW - 500), chatType: 45, userId: ALICE, message: " And more", legacyUuid: "w3", final: true }]),
+    ][answered++]?.() ?? new Promise(() => {}) } });
+    await googleAnswers(page, { refuse: true });
     await expect.poll(() => cards(page)).toBe(4);
     await listenButton(page, "1LiveAAAAAAAA").click();
     await plays(page, 0.2);
-    const chats = () => asked.filter(a => a.path === "/api/live-chat").map(a => a.language);
-    await expect.poll(chats).toEqual(["ru"]);
-    await expect.poll(() => captionShown(page)).toBe("Alice: Привет");
-    // the button names the language it translates to
-    expect(await page.locator(".otd-space-player-translate").getAttribute("aria-label")).toBe("Translate captions: Russian");
-    // off: the live chat again, in TweeXDeck's language, what was said kept
-    await page.click(".otd-space-player-translate");
-    await expect.poll(chats).toEqual(["ru", "en"]);
-    expect(await captionShown(page)).toBe("Alice: Привет");
-    await page.click(".otd-space-player-translate");
-    await expect.poll(chats).toEqual(["ru", "en", "ru"]);
+    await expect.poll(() => page.evaluate(() => window.__told.filter(e => e.kind === "spaces-player").at(-1).translation)).toMatch(/^0 to ru, 2 not \(HTTP 429\), asking again in (29|30) s$/);
+    const translate = page.locator(".otd-space-player-translate");
+    await expect(translate).toHaveAttribute("aria-label", "Перевод субтитров: русский — Google пока не переводит, снова через 1 мин");
+    await expect(translate).toHaveClass(/is-waiting/);
+    // what's said meanwhile isn't asked about till the wait is over
+    await expect.poll(() => captionShown(page), { timeout: 8000 }).toBe("Alice: And more");
+    expect(await page.evaluate(() => window.__google.length)).toBe(1);
+    await page.click(".otd-space-player-wide");
+    expect(await captionLines(page)).toEqual(["Hana: Good morning", "Alice: Hello there", "And more"]);
 });
 
 test("a caption translated as it's said, not once it's final: its translation goes on with it", async ({ page }) => {
