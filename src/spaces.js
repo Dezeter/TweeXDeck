@@ -745,7 +745,7 @@
             kind: "spaces-player", state: player.state || "stopped", error: player.error, recovered: player.recovered.slice(-3),
             chat: chat.liveFailed ? `live chat ${chat.liveFailed}; ${chat.status}` : chat.via === "X's live chat" ? `live chat ${chat.status}` : chat.status, captionsAsked: chat.asked, captions: chat.captions, messages: [...chat.shapes.keys()], answers: chat.answers,
             metadata: [...metadata].map(([kind, n]) => `${kind} ×${n}`), participant: participantShape, space: spaceShape, hydra: hydraStats(),
-            translation: !translateOn() ? "off" : `${translation.done} to ${TRANSLATE_LANG}${translation.from ? ` (they came in ${translation.from})` : ""}${translation.failed ? `, ${translation.failed} not (${translation.error})` : ""}${translation.waitUntil > performance.now() ? `, asking again in ${Math.round((translation.waitUntil - performance.now()) / 1000)} s` : ""}`,
+            translation: !translateOn() ? "off" : `${translation.done} to ${TRANSLATE_LANG}${translation.from ? ` (they came in ${translation.from}${translation.via ? `, by ${translation.via}` : ""})` : ""}${translation.failed ? `, ${translation.failed} not (${translation.error})` : ""}${translation.waitUntil > performance.now() ? `, asking again in ${Math.round((translation.waitUntil - performance.now()) / 1000)} s` : ""}`,
         }) }));
     }
 
@@ -1313,7 +1313,7 @@
     // was; wanted: texts to ask about, as they came; forId: a caption's text wanted, to drop as it's said on;
     // waitUntil, wait: turned away; from: the language Google found the last ones in
     // alone: texts Google merged or split lines with, asked about each alone
-    const translation = { known: new Map(), wanted: [], forId: new Map(), alone: new Set(), timer: 0, running: false, askedAt: -Infinity, waitUntil: 0, wait: 0, done: 0, failed: 0, error: "", from: "" };
+    const translation = { known: new Map(), wanted: [], forId: new Map(), alone: new Set(), timer: 0, running: false, askedAt: -Infinity, waitUntil: 0, wait: 0, done: 0, failed: 0, error: "", from: "", via: "" };
     let googleId = 0;
     const googleWaiting = new Map();
     window.addEventListener("message", e => {
@@ -1384,6 +1384,8 @@
         try {
             const result = await google(batch.join("\n"));
             if(result.lang) translation.from = String(result.lang).slice(0, 12);
+            // Google, or Microsoft where Google turned the address away
+            if(result.via) translation.via = String(result.via).slice(0, 20);
             const out = String(result.text || "").split("\n");
             // Google merging or splitting lines: those again, each alone
             if(out.length !== batch.length && batch.length > 1) {

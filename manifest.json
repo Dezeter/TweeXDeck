@@ -1,7 +1,7 @@
 {
     "name": "TweeXDeck",
     "description": "Returns old TweetDeck!",
-    "version": "5.28.1",
+    "version": "5.28.2",
     "manifest_version": 3,
     "homepage_url": "https://github.com/Dezeter/TweeXDeck",
     "permissions": [
@@ -22,7 +22,9 @@
         "https://abs.twimg.com/*",
         "https://api.twitter.com/*",
         "https://tweetdeck.com/",
-        "https://translate.googleapis.com/*"
+        "https://translate.googleapis.com/*",
+        "https://edge.microsoft.com/*",
+        "https://api-edge.cognitive.microsofttranslator.com/*"
     ],
     "web_accessible_resources": [
         {
